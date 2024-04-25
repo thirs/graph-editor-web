@@ -5,7 +5,7 @@ import Geometry.Point exposing (Point)
 import Polygraph as Graph exposing (EdgeId, NodeId)
 import QuickInput
 import InputPosition exposing (InputPosition)
-import GraphDefs
+import GraphDefs exposing (NodeLabel, EdgeLabel)
 
 
 type Mode
@@ -51,7 +51,7 @@ toString m = case m of
     PullshoutMode _ -> "Pullshout"
     ColorMode _ -> "Color"
 
-type alias CutHeadState = { id: Graph.EdgeId
+type alias CutHeadState = { edge: Graph.Edge EdgeLabel
     , head : Bool -- the head or the tail?
     , duplicate : Bool -- duplicate the arrow? 
     }
@@ -67,10 +67,7 @@ type alias ResizeState =
    }
 
 type alias MoveState = 
-   { orig : Point,  -- mouse original point at the beginning of the move mode
-     -- this was used to compute the move relative to this point, but this
-     -- is no longer used
-      pos : InputPosition
+   {   pos : InputPosition
       -- , merge : Bool 
       -- should we save at the end
      , save : Bool
@@ -116,11 +113,17 @@ type alias PullshoutState =
 
 type PullshoutKind = Pullback | Pushout
 
-
+type ArrowMode =
+    CreateArrow Graph.Id
+  | CreateCylinder
+  | CreateCone
 
 
 type alias NewArrowState =
-    { chosenNode : NodeId, style : ArrowStyle, pos : InputPosition, inverted : Bool }
+    { chosen : Graph.Graph NodeLabel EdgeLabel,
+      mode : ArrowMode, 
+      style : ArrowStyle, 
+      pos : InputPosition, inverted : Bool }
 
 
 type alias SquareState =

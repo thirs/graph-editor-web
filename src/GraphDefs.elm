@@ -12,6 +12,7 @@ module GraphDefs exposing (EdgeLabel, NodeLabel,
    fieldSelect,
    selectedNodes,
    isEmptySelection,
+   selectedEdge,
    selectedEdgeId, selectedNode, selectedId,
    removeSelected, getLabelLabel, getProofNodes,
    getNodesAt, snapToGrid, snapNodeToGrid, exportQuiver,
@@ -19,7 +20,7 @@ module GraphDefs exposing (EdgeLabel, NodeLabel,
    selectSurroundingDiagram,
    centerOfNodes, mergeWithSameLoc,
    findReplaceInSelected, {- closestUnnamed, -} unselect, closest,
-   makeSelection, addWeaklySelected, weaklySelect,
+   makeSelection, addWeaklySelected, weaklySelect, weaklySelectMany,
    getSurroundingDiagrams, updateNormalEdge,
    rectEnveloppe, updateStyleEdges,
    getSelectedProofDiagram, MaybeProofDiagram(..), selectedChain, MaybeChain(..),
@@ -464,12 +465,11 @@ unselect id = Graph.update id
 
 weaklySelect : Graph.Id -> Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel
 weaklySelect id = 
-      Graph.map 
-         (\_ n -> { n | weaklySelected = False})
-         (\_ e -> { e | weaklySelected = False})
-         >>
-      Graph.update id 
-               (\ n -> { n | weaklySelected = True})
+      weaklySelectMany [id]
+weaklySelectMany : List Graph.Id -> Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel
+weaklySelectMany ids g =
+   clearWeakSelection g 
+   |> Graph.updateList ids  (\ n -> { n | weaklySelected = True})
                (\ e -> { e | weaklySelected = True}) 
 
 
@@ -494,12 +494,11 @@ selectSurroundingDiagram pos gi =
 centerOfNodes : List (Node NodeLabel) -> Point
 centerOfNodes nodes = ((Geometry.rectEnveloppe <| List.map (.pos << .label) nodes) |> Geometry.centerRect)
 
-mergeWithSameLoc : Node NodeLabel -> Graph NodeLabel EdgeLabel -> (Graph NodeLabel EdgeLabel, Bool)
+mergeWithSameLoc : Node NodeLabel -> Graph NodeLabel EdgeLabel -> Maybe (Graph NodeLabel EdgeLabel)
 mergeWithSameLoc n g =
     case getNodesAt g n.label.pos |> List.filterNot ((==) n.id) of
-         [ i ] -> (Graph.removeLoops 
-              <| Graph.recursiveMerge i n.id g, True)
-         _ -> (g, False)
+         [ i ] -> Just (Graph.removeLoops <| Graph.recursiveMerge i n.id g)
+         _ -> Nothing
 
 findReplaceInSelected : Graph NodeLabel EdgeLabel -> {search : String, replace: String} ->  Graph NodeLabel EdgeLabel
 findReplaceInSelected g r =

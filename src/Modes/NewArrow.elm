@@ -7,14 +7,16 @@ import Msg exposing (Msg(..))
 import ArrowStyle 
 import HtmlDefs exposing (Key(..))
 import GraphDefs exposing (NodeLabel, EdgeLabel)
-import Modes exposing ( NewArrowState, Mode(..))
+import Modes exposing ( NewArrowState, Mode(..),  ArrowMode(..))
 import InputPosition exposing (InputPosition(..))
 import Model exposing (..)
 import Modes exposing (PullshoutKind(..))
+import Modes exposing (MoveDirection(..))
+import Modes.Move
 import Modes.Pullshout
 import Maybe.Extra
 import Drawing.Color as Color
-import Zindex exposing (defaultZ, backgroundZ)
+import Zindex
 
 
 
@@ -22,49 +24,41 @@ import Zindex exposing (defaultZ, backgroundZ)
 updateState : Model -> NewArrowState  -> Model
 updateState m state = {m | mode = NewArrow state}
 
-
 initialise : Model -> ( Model, Cmd Msg )
 initialise m =
     let modelGraph = getActiveGraph m in
-    GraphDefs.selectedId modelGraph           
-        |> Maybe.Extra.filter (GraphDefs.isNormalId modelGraph)
-        |> Maybe.map
-            (\chosenNode ->               
-                { m
-                    | mode = NewArrow
-
-                            { style = ArrowStyle.empty, 
-                              pos = InputPosMouse,                                 
-                             chosenNode = chosenNode, 
-                             inverted = False }
-                             -- prevent bugs (if the mouse is thought
-                             -- to be kept on a point)
-                      -- , mousePointOver = ONothing
-                }                 
-            )
-        |> Maybe.withDefault m
-        |> noCmd
-
-
-
-
-
+    noCmd <|
+    if GraphDefs.isEmptySelection modelGraph then m else
+    let mode = 
+            case GraphDefs.selectedId modelGraph 
+                |> Maybe.Extra.filter (GraphDefs.isNormalId modelGraph)
+                of 
+            Just id -> CreateArrow id
+            _ -> CreateCylinder
+    in
+     { m  | mode = NewArrow
+        { style = ArrowStyle.empty, 
+            pos = InputPosMouse,                                 
+            chosen = GraphDefs.selectedGraph modelGraph,
+            mode = mode,
+            inverted = False }
+        }  
+            
 nextStep : Model -> Bool -> NewArrowState -> ( Model, Cmd Msg )
 nextStep model finish state =
      let info = moveNodeInfo finish model state in
      
      -- let m2 = addOrSetSel False info.movedNode { model | graph = info.graph } in
-     let m2 = setSaveGraph model <| GraphDefs.weaklySelect info.movedNode
+     let m2 = setSaveGraph model <| GraphDefs.weaklySelectMany info.selectable
                                  <| GraphDefs.clearSelection info.graph
      in
      
      if finish then switch_Default m2 else
-        let ids = if info.created then 
-                     [ info.movedNode , info.edgeId ] 
-                  else [ info.edgeId ]
+        let ids = info.renamable
         in
-        let label = GraphDefs.getLabelLabel state.chosenNode info.graph
-                    |> Maybe.withDefault ""
+        let label = Graph.topmostObject state.chosen |> 
+                    Maybe.andThen (\ id -> GraphDefs.getLabelLabel id info.graph)
+                    |> Maybe.withDefault ""                    
         in
         let ids_labels = List.map (\ id -> (id, label)) ids in
         noCmd <| 
@@ -90,11 +84,16 @@ update state msg model =
     let modelGraph = getActiveGraph model in
     let next finish = nextStep model finish state in
     let pullshoutMode k = 
-           noCmd <| { model | mode =
-                          Modes.Pullshout.initialise modelGraph state.chosenNode k
+           noCmd <|
+           
+           case state.mode  of
+             CreateArrow id -> 
+                { model | mode =
+                          Modes.Pullshout.initialise modelGraph id k
                           |> Maybe.map PullshoutMode
                           |> Maybe.withDefault (NewArrow state)
                        }
+             _ -> model
     in
     case msg of
       
@@ -108,6 +107,12 @@ update state msg model =
         KeyChanged False _ (Character 'i') -> noCmd <| updateState model { state | inverted =  not state.inverted}         
         KeyChanged False _ (Character 'p') -> pullshoutMode Pullback
         KeyChanged False _ (Character 'P') -> pullshoutMode Pushout
+        KeyChanged False _ (Character 'C') -> 
+              let mode = nextPossibleMode state
+                      |> Maybe.withDefault state.mode
+              in
+              noCmd <| updateState model { state | mode = mode}             
+
         _ ->
             let newStyle =  case msg of
                        KeyChanged False _ k -> 
@@ -125,10 +130,17 @@ update state msg model =
                   
                 
             
+nextPossibleMode : NewArrowState -> Maybe ArrowMode
+nextPossibleMode s =
+   case s.mode of
+     CreateCone -> Nothing
+     CreateCylinder -> Just CreateCone
+     CreateArrow _ -> 
+        if List.isEmpty <| Graph.edges s.chosen then
+            Nothing
+        else
+            Just CreateCylinder
 
-
-
- 
 
 moveNodeInfo :
     Bool
@@ -136,41 +148,33 @@ moveNodeInfo :
     -> NewArrowState
     ->
         { graph : Graph NodeLabel EdgeLabel
-        , movedNode : NodeId
-        , edgeId : EdgeId
-        , created : Bool
+        , selectable : List Graph.Id
+        , renamable : List Graph.Id
         }
-moveNodeInfo finish m state =
-    let modelGraph = getActiveGraph m in
-    
-    let makeInfo pos = mayCreateTargetNodeAt m pos "" finish in
-    let
-        ( ( graph, movedNode ), created ) =
-           case state.pos of
-              InputPosMouse -> makeInfo m.mousePos                
-              InputPosKeyboard p ->     
-                --  Debug.log "ici"             
-                    makeInfo (keyboardPosToPoint m state.chosenNode p)
-              InputPosGraph id ->
-                 ((modelGraph, id), False)
-            -- Debug.log "movedNode? "
-             
-           
-    in
-    let (source, target) =
-              if state.inverted then
-                (movedNode, state.chosenNode)
-              else
-                (state.chosenNode, movedNode)
-    in
-    let (g, edgeId) =  Graph.newEdge graph  source target  
-           (GraphDefs.newEdgeLabel "" state.style)
-    in
-     { graph = g
-    , movedNode = movedNode
-    , created = created
-    , edgeId = edgeId
-    }
+moveNodeInfo _ model state = 
+                let modelGraph = getActiveGraph model in
+                let edgeLabel = GraphDefs.newEdgeLabel "" state.style in
+                let nodePos = GraphDefs.centerOfNodes (Graph.nodes state.chosen) in
+                let nodeLabel = GraphDefs.newNodeLabel nodePos "" True Zindex.defaultZ  in
+                let extendedGraph = 
+                     case state.mode of
+                        CreateCylinder ->                        
+                            Graph.makeCylinder modelGraph state.chosen edgeLabel state.inverted
+                        CreateCone ->                            
+                            Graph.makeCone modelGraph (Graph.nodeIds state.chosen) nodeLabel edgeLabel state.inverted
+                        CreateArrow id ->
+                            Graph.makeCone modelGraph [id] nodeLabel edgeLabel state.inverted        
+                in            
+                let moveInfo =
+                        Modes.Move.mkGraph model state.pos
+                        Free 
+                         extendedGraph.extendedGraph extendedGraph.newSubGraph 
+                in
+                let selectable = Graph.allIds extendedGraph.newSubGraph in
+                { graph = moveInfo.graph,
+                selectable = selectable,
+                renamable = (if moveInfo.merged then [] else selectable) ++ extendedGraph.edgeIds}
+
 
 
 graphDrawing : Model -> NewArrowState -> Graph NodeDrawingLabel EdgeDrawingLabel
@@ -180,49 +184,21 @@ graphDrawing m s =
     collageGraphFromGraph m <|
             let info = moveNodeInfo False m s in
              info.graph 
-            --  |> collageGraphFromGraph m
-            {-  |> if info.created then 
-                Graph.updateNode info.movedNode
-                 (\n -> {n | watchEnterLeave = False })
-                else identity -}
-        -- _ ->
-        --     modelGraph -- |> collageGraphFromGraph m
-
-
-
-{- renamableFromState : NewArrowState -> Obj
-renamableFromState state =
-    case state.step of
-        NewArrowEditNode m _ ->
-            ONode m
-
-        NewArrowEditEdge _ m ->
-            OEdge m
-
-        NewArrowMoveNode _ ->
-            ONothing -}
-
+         
 help : String
-help  =
+help =
 --  case s of
 --         NewArrowMoveNode _ ->
             -- Debug.toString st ++
-            "[?] toggle help overlay, [ESC] cancel, [click, TAB] name the point (if new), "
+            HtmlDefs.overlayHelpMsg ++
+            ", [ESC] cancel, [click, TAB] name the point (if new), "
             ++ "[hjkl] position the new point with the keyboard, "
              ++ "[RET] terminate the arrow creation, "
              ++ "[\""
              ++ ArrowStyle.controlChars
              ++ "\"] alternate between different arrow styles, "
              ++ "[i]nvert arrow, "
+             ++ "[p]ullback/[P]ushout mode, "
+             ++ "[C] switch to cone/cylinder creation (if relevant).\n"
              ++ "[p]ullback/[P]ushout mode.\n"
              ++ "Colors: " ++ Color.helpMsg
-        -- NewArrowEditNode _ _ ->
-        --     "[ESC] empty label, [RET] confirm the label, "
-        --     ++ "[TAB] edit the edge label."
-
-        -- NewArrowEditEdge _ _ ->
-        --      "[ESC] empty label, [RET] confirm the label."
-            
-
-
-  

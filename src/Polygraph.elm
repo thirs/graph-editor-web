@@ -1,21 +1,21 @@
-module Polygraph exposing (Graph, Id, EdgeId, NodeId, empty,
+module Polygraph exposing (Graph, Id, EdgeId, NodeId, empty, allIds, nodeIds,
      newNode, newEdge,
      update, updateNode, updateEdge, updateNodes, updateList,
-     invertEdge, merge, recursiveMerge,
+     invertEdge, merge, recursiveMerge, makeCylinder, makeCone,
      getNode, getNodes, getEdge, getEdges, get, removeNode, removeEdge,
      map, mapRecAll, invalidEdges,
      nodes, edges, fromNodesAndEdges,
      filterNodes, keepBelow, filterMap,
      Node, Edge, nextId,
      incomings, outgoings, drop, 
-     normalise,
-     union, edgeMap, nodeMap,
+     normalise, 
+     disjointUnion, edgeMap, nodeMap,
      {- findInitial, sourceNode, -} removeLoops,
-     incidence, any, connectedClosure, minimal, maximal)
+     incidence, any, connectedClosure, minimal, maximal, complement, topmostObject)
 import IntDict exposing (IntDict)
 import IntDictExtra 
 import Maybe.Extra as Maybe
-
+import List.Extra
 
 
 type alias Id = Int
@@ -438,6 +438,7 @@ invertEdge id (Graph g) =
 -- only on the first object
 merge : Id -> Id -> Graph n e -> Graph n e
 merge i1 i2 g = 
+  if i1 == i2 then g else 
   rawMerge i1 i2 g |> sanitise
 
 rawMerge : Id -> Id -> Graph n e -> Graph n e
@@ -454,9 +455,11 @@ rawMerge i1 i2 (Graph g) =
 
 -- same as merge, but if i1 and i2 are edges, we first merge the sources and targets
 -- (recursively)
+-- if i1 is a vertex and i2 is an edge, we merge the source and the target of i2 with i1
 recursiveMerge : Id -> Id -> Graph n e -> Graph n e
 recursiveMerge i1 i2 g =
-   recursiveMergeAux i1 i2 g |> sanitise
+   if i1 == i2 then g else 
+   recursiveMergeAux i1 i2 g |> sanitise |> removeLoops
 
 recursiveMergeAux : Id -> Id -> Graph n e -> Graph n e
 recursiveMergeAux i1 i2 (Graph g) =
@@ -465,6 +468,10 @@ recursiveMergeAux i1 i2 (Graph g) =
         Graph g |> recursiveMerge a1 b1 
         |> recursiveMerge a2 b2 
          |> rawMerge i1 i2
+      (Just (NodeObj _), Just (EdgeObj a1 a2 _)) ->
+         Graph g |> recursiveMerge i1 a1
+                 |> recursiveMerge i1 a2
+                 |> rawMerge i1 i2
       _ -> rawMerge i1 i2 (Graph g)
 
    
@@ -488,12 +495,24 @@ addId n g =
      )
      |> IntDict.fromList
 
--- indices in the base graphe are kept
+-- clash of indices?
 union : Graph n e -> Graph n e -> Graph n e
 union (Graph base) (Graph ext) = 
+  IntDict.union base ext |> Graph
+
+-- make the indices of the second graph disjoint from the first
+makeDisjoint : Graph n e -> Graph n e -> Graph n e  
+makeDisjoint (Graph base) (Graph ext) =
    let baseId = supId base in
-   let extUp = addId baseId ext in   
-     IntDict.union base extUp |> Graph
+   let extUp = addId baseId ext in  
+   Graph extUp
+
+-- indices in the base graphe are kept
+disjointUnion : Graph n e -> Graph n e -> 
+    { extendedGraph : Graph n e, subGraph : Graph n e }
+disjointUnion base ext = 
+   let subGraph = makeDisjoint base ext in
+   { extendedGraph = union base subGraph, subGraph = subGraph }
 
 
 computeDimensions : Graph n e -> Graph n (e, Int)
@@ -594,6 +613,69 @@ maximal g =
   nodes g |> List.map .id 
   |> List.filter (\ id -> List.all (\ e -> e.from /= id) gedges)
 
+topmostObjects : Graph n e -> List Id
+topmostObjects g = 
+  let gedges = edges g in
+  allIds g |>
+  List.filter (\ id -> List.all (\ e -> e.to /= id && e.from /= id) gedges)
+
+topmostObject : Graph n e -> Maybe Id
+topmostObject g =
+   case topmostObjects g of
+       [ id ] -> Just id
+       _ -> Nothing
+
+nodeIds : Graph n e -> List NodeId
+nodeIds g = 
+   nodes g |> List.map .id  
+
+allIds : Graph n e -> List Id
+allIds (Graph g) = IntDict.keys g
+
+makeCylinder : Graph n e -> Graph n e -> e -> Bool -> 
+   { extendedGraph : Graph n e, newSubGraph : Graph n e, edgeIds : List EdgeId}
+makeCylinder g subGraph label inverted = 
+   let extGraph = disjointUnion g subGraph in
+   let idPairs = List.Extra.zip (nodeIds subGraph) (nodeIds extGraph.subGraph) 
+           |> List.map (\ (id1, id2) -> if inverted then (id2, id1) else (id1, id2))
+   in
+   let (extendedGraph, idEdges) = newEdges extGraph.extendedGraph idPairs label in
+   { extendedGraph = extendedGraph, newSubGraph = extGraph.subGraph, edgeIds = idEdges}
+
+newEdges : Graph n e -> List (Id, Id) -> e -> (Graph n e, List EdgeId)
+newEdges g idPairs labelEdge = 
+    let (extendedGraph, idEdges) = 
+               List.foldl (\(id1, id2) (graph, l) -> 
+                              let (newGraph, idEdge) = (newEdge graph id1 id2 labelEdge) in
+                              (newGraph, idEdge :: l)
+                           ) 
+                  (g, []) idPairs 
+    in
+      (extendedGraph, idEdges)
+
+-- TODO: factor makeCone and makeCylinder
+makeCone : Graph n e -> List Id -> n -> e -> Bool -> 
+   { extendedGraph : Graph n e, newSubGraph : Graph n e, edgeIds : List EdgeId}
+makeCone g ids labelNode labelEdge inverted = 
+   let extGraph = newNode empty labelNode |> Tuple.first |> disjointUnion g in
+   let newId = nodeIds extGraph.subGraph |> List.head |> Maybe.withDefault 0 in
+   let idPairs = 
+        List.map (\ id -> if inverted then (newId, id) else (id, newId))
+        ids
+   in
+   let (extendedGraph2, idEdges) = newEdges extGraph.extendedGraph idPairs labelEdge in
+   { extendedGraph = extendedGraph2, newSubGraph = extGraph.subGraph, edgeIds = idEdges}
+
+
+complement : Graph n e -> Graph n e -> Graph n e
+complement graph subGraph =
+   let markedGraph = map (\ _ n -> (False, n)) (\ _ n -> (False, n)) graph in
+   let ids = nodeIds subGraph in
+
+   updateList ids (\ (_, n) -> (True, n)) (\ (_, n) -> (True, n)) markedGraph 
+   |> drop (Tuple.first) (Tuple.first)
+   |> map (always Tuple.second) (always Tuple.second)
+
 any : (n -> Bool) -> (e -> Bool) -> Graph n e -> Bool
 any fn fe (Graph g) =
        IntDictExtra.any 
@@ -601,7 +683,7 @@ any fn fe (Graph g) =
                  NodeObj n -> fn n
                  EdgeObj _ _ e -> fe e) g
      
-   
+
 {- sourceNode : Graph n e -> Id -> NodeId
 sourceNode (Graph g) id =
   case IntDict.get id g of
