@@ -51,9 +51,10 @@ toString m = case m of
     PullshoutMode _ -> "Pullshout"
     ColorMode _ -> "Color"
 
-type alias CutHeadState = { id: Graph.EdgeId
+type alias CutHeadState = { edge: Graph.Edge EdgeLabel
     , head : Bool -- the head or the tail?
     , duplicate : Bool -- duplicate the arrow? 
+    -- , merge : Bool
     }
 
 isResizeMode : Mode -> Bool
@@ -68,11 +69,11 @@ type alias ResizeState =
 
 type alias MoveState = 
    {   pos : InputPosition
-      -- , merge : Bool 
       -- should we save at the end
      , save : Bool
      , mode : MoveMode
      , direction : MoveDirection
+    --  , merge : Bool
   }
 type MoveDirection =
   Free | Vertical | Horizontal
@@ -114,7 +115,7 @@ type alias PullshoutState =
 type PullshoutKind = Pullback | Pushout
 
 type ArrowMode =
-    CreateArrow
+    CreateArrow Graph.Id
   | CreateCylinder
   | CreateCone
 
@@ -123,7 +124,9 @@ type alias NewArrowState =
     { chosen : Graph.Graph NodeLabel EdgeLabel,
       mode : ArrowMode, 
       style : ArrowStyle, 
-      pos : InputPosition, inverted : Bool }
+      pos : InputPosition, inverted : Bool
+      -- merge : Bool
+       }
 
 
 type alias SquareState =

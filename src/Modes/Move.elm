@@ -27,13 +27,14 @@ initialise save mode model =
               { save = save,               
               pos = InputPosMouse,
               direction = Free,
+              -- merge = False,
               mode = mode }
       }    
 
 update : Msg -> Modes.MoveState -> Model -> (Model, Cmd Msg)
 update msg state model =
-    let movedRet () = 
-           let info = mkInfo model state in
+    let movedRet merge = 
+           let info = mkInfo model merge state in
            if info.valid then
               switch_Default 
               <| if state.save then
@@ -45,12 +46,13 @@ update msg state model =
               noCmd model
     in
     let terminable = state.mode /= PressMove in
-    let terminedRet () = 
-         if terminable then movedRet () else noCmd model
+    let terminedRet merge = 
+         if terminable then movedRet merge else noCmd model
     in
     let updateState st = { model | mode = Move st } in
     let updateDirection direction = noCmd <| updateState  { state | direction = direction} in
     case msg of
+        KeyChanged True _ (Control "Control") -> terminedRet True
         KeyChanged False _ (Character '?') -> noCmd <| toggleHelpOverlay model
         KeyChanged False _ (Control "Escape") -> switch_Default model
         PressTimeout ->
@@ -63,50 +65,54 @@ update msg state model =
            case state.mode of              
              UndefinedMove -> 
                 noCmd <| updateState { state | mode = FreeMove }
-             PressMove -> movedRet ()
+             PressMove -> movedRet False
              FreeMove -> noCmd model
         KeyChanged False _ (Character 'f') -> updateDirection Free
         KeyChanged False _ (Character 'x') -> updateDirection Horizontal
         KeyChanged False _ (Character 'y') -> updateDirection Vertical
        
-        MouseClick -> terminedRet ()
-        KeyChanged False _ (Control "Enter") -> terminedRet ()
+        MouseClick -> terminedRet False
+        KeyChanged False _ (Control "Enter") -> terminedRet False
         _ ->  noCmd <| updateState { state | pos = InputPosition.update state.pos msg }
 
 
-mkGraph : Model -> InputPosition -> Bool -> Maybe Graph.Id -> MoveDirection -> Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel ->  { graph : Graph NodeLabel EdgeLabel,
-   -- The graph is not valid if we are in merge mode
-   -- and no object is pointed at
-     valid : Bool }
-     -- not sure about merge and mergeId
-     -- TODO: remove the redundancy
-mkGraph model pos merge mergeId direction modelGraph selectedGraph = 
+mkGraph : Model -> InputPosition -> MoveDirection -> Bool -> Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel -> 
+ -- what is marked as weakly selected are the potential merged target
+   { graph : Graph NodeLabel EdgeLabel,
+     merged : Bool }
+
+mkGraph model pos direction shouldMerge modelGraph selectedGraph = 
+-- even if shouldMerge is false, it could attempt a merge if
+-- there is a node precisely at the location, and the move is
+-- directed by the keyboard
+    -- let shouldMerge = model.specialKeys.ctrl in
+    let mergeId = Graph.topmostObject selectedGraph in
+    let complementGraph = Graph.complement modelGraph selectedGraph in
     let nodes = Graph.nodes selectedGraph in
     let updNode delta {id, label} = 
           {id = id, label = { label | pos = Point.add label.pos delta }}
     in
     let moveNodes delta = nodes |> List.map (updNode delta) in
-   --  let moveGraph delta =  Graph.updateNodes (moveNodes delta) modelGraph in
-    let mkRet movedNodes = 
-            let g = Graph.updateNodes movedNodes modelGraph in
-            { graph =  g, valid = not merge } in
-    let retMerge movedNodes =                  
-           case movedNodes of
-              [ n ] ->        
-                let (g, valid) = GraphDefs.mergeWithSameLoc n modelGraph in
-                if valid then
-                  {graph = g, valid = True }
-                else
-                  mkRet movedNodes
-              _ -> mkRet movedNodes      
-    in       
-    let retDelta delta =
-            let movedNodes = moveNodes delta in
-            if merge then
-                retMerge movedNodes
-            else
-                mkRet movedNodes      
-          
+   
+    let retDelta allowOverlap delta =
+          let movedNodes = moveNodes delta in
+          let newPos = GraphDefs.centerOfNodes movedNodes in
+          let overlapId = 
+                 if allowOverlap then (GraphDefs.getNodesAt complementGraph newPos |> List.head)
+                 else Nothing
+          in
+          let closestId = GraphDefs.closest newPos complementGraph in 
+          let retMerge id1 id2 =
+                    { graph = Graph.recursiveMerge id1 id2 modelGraph, 
+                        merged = True } 
+          in
+          case (overlapId, mergeId, shouldMerge) of
+             (Just targetId, Just sourceId, _) -> retMerge targetId sourceId
+             (_, Just sourceId, True) -> retMerge closestId sourceId
+             _ -> let g = Graph.updateNodes movedNodes modelGraph 
+                         |>  GraphDefs.weaklySelect closestId 
+                  in
+                    { graph = g, merged = False }           
     in
    
     let mouseDelta = 
@@ -117,40 +123,41 @@ mkGraph model pos merge mergeId direction modelGraph selectedGraph =
                       Horizontal -> (dx, 0)
     in
     let sizeGrid = getActiveSizeGrid model in
+    
     case pos of
-      InputPosKeyboard p -> retDelta <| InputPosition.deltaKeyboardPos sizeGrid p
-      InputPosGraph id ->         
-         if not merge then 
-            retDelta mouseDelta
-         else        
-            case mergeId of
-               Just selId -> { graph = Graph.recursiveMerge id selId modelGraph, valid = True }  
-               Nothing -> retDelta mouseDelta
-      InputPosMouse -> retDelta mouseDelta
+      InputPosKeyboard p -> retDelta 
+                           True
+                           (InputPosition.deltaKeyboardPos sizeGrid p)
+      -- not reliable, as it could be the moving stuff
+      InputPosGraph _ ->  
+         retDelta False mouseDelta
+      InputPosMouse -> 
+        -- let _ = Debug.log "input pos mouse" "" in
+        retDelta False mouseDelta 
 
-mkInfo : Model -> Modes.MoveState -> 
+mkInfo : Model -> Bool -> Modes.MoveState -> 
    { graph : Graph NodeLabel EdgeLabel,
    -- The graph is not valid if we are in merge mode
    -- and no object is pointed at
      valid : Bool }
 
-mkInfo model { pos, direction } =    
-    let merge = model.specialKeys.ctrl in
+mkInfo model merge { pos, direction } =    
     let modelGraph = getActiveGraph model in
     let selectedGraph = GraphDefs.selectedGraph modelGraph in
-    mkGraph model pos merge (GraphDefs.selectedId modelGraph) direction modelGraph selectedGraph 
+    let {merged, graph} = mkGraph model pos direction merge modelGraph selectedGraph in
+    { graph = graph, valid = True } -- merge ==> merged
   
 
 graphDrawing : Model -> MoveState -> Graph NodeDrawingLabel EdgeDrawingLabel
-graphDrawing m s = mkInfo m s |> .graph |>
+graphDrawing m s = mkInfo m False s |> .graph |>
             collageGraphFromGraph m 
 
 help : MoveState -> String
 help s =
          "Mode Move. " ++
                 HtmlDefs.overlayHelpMsg        
-                ++ "Use mouse or h,j,k,l."
-                ++ " Hold [ctrl] to merge the selected point onto another node,"
+                ++ ". Use mouse or h,j,k,l."
+                ++ " [ctrl] to merge,"
                 ++ " Press [x] or [y] to restrict to horizontal / vertical directions, or let it [f]ree " 
                 ++ "(currently, "
                 ++ (case s.direction of

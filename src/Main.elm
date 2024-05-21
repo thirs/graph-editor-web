@@ -835,10 +835,7 @@ s                  (GraphDefs.clearSelection modelGraph) } -}
              setActiveGraph model
              <| GraphDefs.selectSurroundingDiagram model.mousePos modelGraph
         KeyChanged False k (Character 'C') -> 
-            case GraphDefs.selectedEdgeId modelGraph 
-                |> Maybe.filter (GraphDefs.isNormalId modelGraph) of
-              Nothing -> noCmd model
-              Just id -> noCmd {  model | mode = CutHead { id = id, head = True, duplicate = False } }   
+             noCmd <| Modes.CutHead.initialise model
         KeyChanged False k (Character 'c') -> 
             if k.ctrl then noCmd model -- we don't want to interfer with the copy event C-c
             else
@@ -987,7 +984,7 @@ s                  (GraphDefs.clearSelection modelGraph) } -}
               Nothing -> noCmd model
               Just tab ->
                    noCmd <| Modes.Move.initialise False FreeMove
-                   <|  setSaveGraph model <|              
+                   <|  setSaveGraph model <| .extendedGraph <|          
                     Graph.disjointUnion 
                       (GraphDefs.clearSelection modelGraph)
                       (GraphDefs.selectAll tab.graph)
@@ -1212,7 +1209,7 @@ graphDrawingFromModel m =
         SquareMode state -> Modes.Square.graphDrawing m state
         SplitArrow state -> Modes.SplitArrow.graphDrawing m state
         PullshoutMode state -> Modes.Pullshout.graphDrawing m state
-        CutHead state -> Modes.CutHead.makeGraph state m |> GraphDrawing.toDrawingGraph
+        CutHead state -> Modes.CutHead.graphDrawing m state
         ResizeMode sizeGrid -> graphResize sizeGrid m |> GraphDrawing.toDrawingGraph
         
 

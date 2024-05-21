@@ -1,61 +1,70 @@
-module Modes.CutHead exposing (update, makeGraph, help)
-import Modes exposing (CutHeadState, Mode(..))
+module Modes.CutHead exposing (update, graphDrawing, help, initialise)
+import Modes exposing (CutHeadState, Mode(..), MoveDirection(..))
+import Modes.Move
 import Model exposing (Model, setActiveGraph, noCmd, toggleHelpOverlay, getActiveGraph)
 import Msg exposing (Msg(..))
 import Polygraph as Graph exposing (Graph)
 import HtmlDefs exposing (Key(..))
 import GraphDefs exposing (NodeLabel, EdgeLabel, edgeToNodeLabel)
+import InputPosition exposing (InputPosition(..))
+import Zindex
+import GraphDrawing exposing (NodeDrawingLabel, EdgeDrawingLabel)
+
+initialise : Model -> Model
+initialise model =
+   let modelGraph = getActiveGraph model in
+   case GraphDefs.selectedEdge modelGraph of
+      Nothing -> model
+      Just e -> if GraphDefs.isPullshout e.label then model else 
+                 {  model | mode = CutHead { edge = e,head = True, duplicate = False } }   
 
 help : String 
 help =          HtmlDefs.overlayHelpMsg
-                ++ ", [RET] or [click] to confirm, [ctrl] to merge the endpoint with existing node. [ESC] to cancel. "
+                ++ ", [RET] or [click] to confirm, [ctrl] to merge. [ESC] to cancel. "
                 ++ "[c] to switch between head/tail"                
                 ++ ", [d] to duplicate (or not) the arrow."
 
 update : CutHeadState -> Msg -> Model -> (Model, Cmd Msg)
 update state msg m =
-  let finalise () = 
-         (setActiveGraph {m | mode = DefaultMode} (makeGraph state m), Cmd.none)
+  let finalise merge = 
+         (setActiveGraph {m | mode = DefaultMode} (makeGraph merge state m), Cmd.none)
          -- computeLayout())
   in
   let changeState s = { m | mode = CutHead s } in
   case msg of
         KeyChanged False _ (Character '?') -> noCmd <| toggleHelpOverlay m
         KeyChanged False _ (Control "Escape") -> ({ m | mode = DefaultMode}, Cmd.none)
-        KeyChanged False _ (Control "Enter") -> finalise ()
-        MouseClick -> finalise ()
+        KeyChanged False _ (Control "Enter") -> finalise False
+        KeyChanged True _ (Control "Control") -> finalise True
+        MouseClick -> finalise False
         KeyChanged False _ (Character 'c') -> (changeState { state | head = (not state.head)} , Cmd.none)
         KeyChanged False _ (Character 'd') -> (changeState { state | duplicate = (not state.duplicate)} , Cmd.none)
         _ -> noCmd m
 
+graphDrawing : Model -> CutHeadState -> Graph NodeDrawingLabel EdgeDrawingLabel
+graphDrawing m state = 
+  makeGraph False state m |> GraphDrawing.toDrawingGraph
 
-makeGraph  : CutHeadState -> Model -> Graph NodeLabel EdgeLabel
-makeGraph  {id, head, duplicate} m =
-   let modelGraph = getActiveGraph m in
-   let pos = m.mousePos in
-    Graph.getEdge id modelGraph 
-    |> Maybe.andThen (\e -> Graph.get (if head then e.to else e.from)
-       (\label -> {label | pos = pos})(edgeToNodeLabel pos)
-         modelGraph 
-    |> Maybe.map (\ label -> 
-    let g1 = modelGraph in
-    let (g2, newId) = Graph.newNode g1 label in
-    let (n1, n2) = if head then (e.from, newId) else (newId, e.to) in
-    let (g3, edgeId) = Graph.newEdge g2 n1 n2  e.label in
+-- TODO: factor with newArrow.moveNodeInfo
+makeGraph  : Bool -> CutHeadState -> Model -> Graph NodeLabel EdgeLabel
+makeGraph merge {edge, head, duplicate} model =
+   let modelGraph = getActiveGraph model in
+   let pos = model.mousePos in
+   let (id1, id2) = if head then (edge.from, edge.to) else (edge.to, edge.from) in
+   let nodeLabel = Graph.get id2
+         (\label -> {label | pos = pos})(edgeToNodeLabel pos)
+         modelGraph |> 
+         Maybe.withDefault (GraphDefs.newNodeLabel pos "" True Zindex.defaultZ )
+   in
+   let extGraph =  Graph.makeCone modelGraph [id1] nodeLabel edge.label (not head) in
     let g4 = 
          if duplicate then 
-            GraphDefs.unselect id g3 
-         else 
-            Graph.merge edgeId id g3 
+            GraphDefs.unselect edge.id extGraph.extendedGraph 
+         else
+            List.foldl (\ id -> Graph.merge id edge.id) extGraph.extendedGraph
+            extGraph.edgeIds
     in
-    let g5 = if m.specialKeys.ctrl then 
-                     Tuple.first <| 
-                     GraphDefs.mergeWithSameLoc
-                       { id = newId, label = label }
-                       g4
-             else g4
-    in
-    
-    g5
-    ))   
-    |> Maybe.withDefault modelGraph
+   let moveInfo =
+         Modes.Move.mkGraph model InputPosMouse Free merge g4 extGraph.newSubGraph 
+   in
+    moveInfo.graph
