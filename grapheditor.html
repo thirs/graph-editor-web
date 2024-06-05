@@ -575,8 +575,21 @@
                     failure : failure});
          }
 
+         function processProof(script) {
+            var s = script.proof;
+            if (s != "") {
+                var json = JSON.stringify(script.graph);
+                if (json)
+                   s = 
+                      "(*\n YADE DIAGRAM " + 
+                       json + "\n *)\n" + s;
+            }
+            return s;
+         }
+
          app.ports.generateProofJs.subscribe(function(script) {
-            copyErr(script, 
+            var s = processProof(script);
+            copyErr(s, 
               "No selected diagram found!",
               "Coq script successfully copied",
               "Copy failed"
@@ -635,7 +648,7 @@
 
 
             app.ports.generateProofJs.subscribe(function(script){
-                window.electronAPI.generateProof(script)
+                window.electronAPI.generateProof(processProof(script))
             });
             window.electronAPI.appliedProof((event, content) =>
                 { app.ports.appliedProof.send(content);}
