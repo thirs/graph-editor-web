@@ -3,22 +3,24 @@ module Tikz exposing (graphToTikz)
 import GraphDefs exposing (NodeLabel, EdgeLabel, EdgeType(..), GenericEdge)
 import Polygraph as Graph exposing (Graph, Node, Edge)
 import Maybe.Extra
-import ArrowStyle exposing (LabelAlignment(..))
+import Geometry exposing (LabelAlignment(..))
+import ArrowStyle
 
 encodeNodeTikZ : Int -> Node NodeLabel -> String
 encodeNodeTikZ sizeGrid n =
     -- TODO: faire la normalisation
-    let (x, y) = n.label.pos in
+    let (x, y) = GraphDefs.getNodePos n.label in
     let coord u = (u / 21) in -- 17.7667
+    let label = (if n.label.label == "" then "\\bullet" else n.label.label ) in
     "\\node ("
         ++ String.fromInt n.id
         ++ ") at ("
         ++ String.fromFloat (coord x)
         ++ "em, "
         ++ String.fromFloat (0 - coord y)
-        ++ "em) {$"
-        ++ (if n.label.label == "" then "\\bullet" else n.label.label )
-        ++ "$} ; \n"
+        ++ "em) {"
+        ++ (if n.label.isMath then "$" ++ label ++ "$" else label)
+        ++ "} ; \n"
 
 encodeFakeEdgeTikZ : Edge EdgeLabel -> String
 encodeFakeEdgeTikZ e =
@@ -107,7 +109,10 @@ encodeLabel e =
             ""
 
         NormalEdge l ->
-            let lbl = "$\\scriptstyle " ++ l.label ++ "$" in
+            let lbl = "${\\scriptstyle " ++ 
+                    l.label 
+                    ++ "}$"
+            in
             (case l.style.labelAlignment of
                  Over -> "labelonat={" ++ lbl ++ "}{" ++ String.fromFloat l.style.labelPosition ++ "}, "
                  Centre -> "labelonat={" ++ lbl ++ "}{" ++ String.fromFloat l.style.labelPosition ++ "}, "                 

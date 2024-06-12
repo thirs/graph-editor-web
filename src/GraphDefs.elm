@@ -1,39 +1,50 @@
 module GraphDefs exposing (EdgeLabel, NodeLabel,
-   NormalEdgeLabel, EdgeType(..), GenericEdge,
-   filterLabelNormal, filterEdgeNormal, isNormalId, isPullshout,
-   filterNormalEdges,
+   NormalEdgeLabel, EdgeType(..), GenericEdge, edgeToNodeLabel,
+   filterLabelNormal, filterEdgeNormal, isNormalId, isNormal, isPullshout,
+   filterNormalEdges, coqProofTexCommand,
    newNodeLabel, newEdgeLabel, newPullshout, emptyEdge,
    selectedEdges, mapNormalEdge,  mapDetails, 
-   createNodeLabel,
+   createNodeLabel, createProofNode,
    getNodeLabelOrCreate, getNodeDims, getNodePos, getEdgeDims,
-   addNodesSelection, selectAll, clearSelection, selectedGraph,
+   addNodesSelection, selectAll, clearSelection, 
+   clearWeakSelection,
+   selectedGraph,
    fieldSelect,
    selectedNodes,
    isEmptySelection,
+   selectedEdge,
    selectedEdgeId, selectedNode, selectedId,
-   removeSelected, getLabelLabel,
+   removeSelected, getLabelLabel, getProofNodes,
    getNodesAt, snapToGrid, snapNodeToGrid, exportQuiver,
    addOrSetSel, toProofGraph, selectedIncompleteDiagram,
-   selectSurroundingDiagram, cloneSelected,
+   selectSurroundingDiagram,
    centerOfNodes, mergeWithSameLoc,
    findReplaceInSelected, {- closestUnnamed, -} unselect, closest,
-   makeSelection, addWeaklySelected, weaklySelect,
-   getSurroundingDiagrams, updateNormalEdge
+   makeSelection, addWeaklySelected, weaklySelect, weaklySelectMany,
+   getSurroundingDiagrams, updateNormalEdge,
+   rectEnveloppe, updateStyleEdges,
+   getSelectedProofDiagram, MaybeProofDiagram(..), selectedChain, MaybeChain(..),
+   createValidProofAtBarycenter, isProofLabel, makeProofString, posGraph
    )
 
 import IntDict
+import Zindex exposing (defaultZ)
 import Geometry.Point as Point exposing (Point)
-import Geometry
-import ArrowStyle exposing (ArrowStyle, LabelAlignment(..))
+import Geometry exposing (LabelAlignment(..))
+import Geometry.QuadraticBezier as Bez
+import ArrowStyle exposing (ArrowStyle)
 import Polygraph as Graph exposing (Graph, NodeId, EdgeId, Node, Edge)
 import GraphProof exposing (LoopNode, LoopEdge, Diagram)
 
 import Json.Encode as JEncode
 import List.Extra as List
 import Maybe.Extra as Maybe
+import Geometry.Point
+import Geometry.QuadraticBezier exposing (QuadraticBezier)
 
-type alias NodeLabel = { pos : Point , label : String, dims : Maybe Point, selected : Bool, weaklySelected : Bool,
-                         isMath : Bool}
+type alias NodeLabel = { pos : Point , label : String, dims : Maybe Point, 
+                         selected : Bool, weaklySelected : Bool,
+                         isMath : Bool, zindex: Int, isCoqValidated: Bool}
 
 type alias EdgeLabel = GenericEdge EdgeType
 type alias GenericEdge a = { details : a, selected : Bool,
@@ -46,6 +57,18 @@ type EdgeType =
    | NormalEdge NormalEdgeLabel
 
 type alias NormalEdgeLabel = { label : String, style : ArrowStyle, dims : Maybe Point}
+
+coqProofTexCommand = "coqproof"
+
+edgeToNodeLabel : Point -> EdgeLabel -> NodeLabel
+edgeToNodeLabel pos l = 
+   let nodeLabel = { pos = pos, label = "", dims = Nothing,
+                 selected = l.selected, weaklySelected = l.weaklySelected,
+                 zindex = l.zindex, isMath = True, isCoqValidated = False}
+   in
+   case l.details of 
+     PullshoutEdge -> nodeLabel
+     NormalEdge {label, dims} -> {nodeLabel | label = label, dims = dims}
 
 filterNormalEdges : EdgeType -> Maybe NormalEdgeLabel
 filterNormalEdges d =  case d of
@@ -113,17 +136,65 @@ computeEdgePos from to e = e.style.bend
               Point.normalise offset <|        
                Point.subtract q.controlPoint <| m -}
 
+getProofFromLabel : String -> Maybe String
+getProofFromLabel s =
+   let s2 = String.trim s in
+   let prefix = "\\" ++ coqProofTexCommand ++ "{" in
+   if String.startsWith prefix s2 then
+      Just (String.slice (String.length prefix) (-1) s2)
+   else
+      Nothing
+
+isProofLabel : NodeLabel -> Bool
+isProofLabel l = getProofFromLabel l.label /= Nothing
+
+getProofNodes : Graph NodeLabel EdgeLabel -> List (Node NodeLabel)
+getProofNodes g =
+   Graph.nodes g |> List.filter (\n -> isProofLabel n.label)
+
+
+selectedProofNode : Graph NodeLabel EdgeLabel -> Maybe (Node NodeLabel, String)
+selectedProofNode g =
+  case selectedNode g |> Maybe.map 
+     (\n -> (n, getProofFromLabel n.label.label)) of
+      Nothing -> Nothing
+      Just (_, Nothing) -> Nothing
+      Just (n, Just s) -> Just (n, s)
+
+type MaybeProofDiagram =
+     NoProofNode
+   | NoDiagram
+   | JustDiagram { proof : String, diagram : Diagram}
+
+-- returns the diagram around the selected proof
+getSelectedProofDiagram : Graph NodeLabel EdgeLabel -> MaybeProofDiagram
+getSelectedProofDiagram g =
+  case selectedProofNode g of
+    Nothing -> NoProofNode
+    Just (n, s) ->
+       case getSurroundingDiagrams n.label.pos g of 
+         [] -> NoDiagram
+         d :: _ -> JustDiagram { proof = s, diagram = d }
+
 toProofGraph :  Graph NodeLabel EdgeLabel -> Graph LoopNode LoopEdge
 toProofGraph = 
-    keepNormalEdges >>
-   
-    Graph.mapRecAll (\n -> n.pos)
-             (\n -> n.pos)
-             (\ _ n -> { pos = n.pos, label = n.label })
-             (\ _ fromP toP {details}  -> 
-                        { angle = Point.subtract toP fromP |> Point.pointToAngle ,
+    Graph.removeLoops >>
+    posGraph >>
+    Graph.filterMap Just (
+      \e -> case (filterLabelNormal e.label, e.bezier) of 
+             (Just l, Just b) -> Just { details = l.details, bezier = b }
+             (_ , _) -> Nothing
+      )
+    >>
+    Graph.map 
+             (\ _ n -> { pos = n.pos, label = n.label, proof = getProofFromLabel n.label })
+             (\ _ {details, bezier}  -> 
+                        { angleIn = Point.subtract bezier.controlPoint bezier.from |> Point.pointToAngle ,
+                          angleOut= Point.subtract bezier.controlPoint bezier.to |> Point.pointToAngle,
                           label = details.label, -- (if l.label == "" && l.style.double then fromLabel else l.label),
-                          pos = Point.middle fromP toP,
+                          pos = Bez.middle bezier,
+                          from = bezier.from,
+                          to = bezier.to,
                           identity = details.style.double })
 
 selectedIncompleteDiagram : Graph NodeLabel EdgeLabel -> Maybe Diagram
@@ -132,10 +203,52 @@ selectedIncompleteDiagram g =
     GraphProof.getIncompleteDiagram gc
      <| Graph.getEdges (selectedEdges g |> List.map .id) gc
 
+type MaybeChain =
+     JustChain (Graph NodeLabel EdgeLabel, Diagram)
+   | NoClearOrientation
+   | NoChain
+{-
+Returns the graph with an edge added between the minimal and the maximal points, and the diagram
+-}
+selectedChain : Graph NodeLabel EdgeLabel -> MaybeChain
+selectedChain g = 
+   let gs = selectedGraph g in
+   case (Graph.minimal gs, Graph.maximal gs) of
+     ([ minId ] , [ maxId ]) ->
+        if minId == maxId then NoChain else
+        let (weakSel, trueSel) = if isTrueSelection gs then (False, True) else (True, False) in
+        let label = { emptyEdge | weaklySelected = weakSel, selected = trueSel } in
+        let (newGraph, _) = Graph.newEdge g minId maxId label in
+        case selectedIncompleteDiagram newGraph of
+          Nothing -> NoClearOrientation
+          Just d -> JustChain (newGraph, d)
+     (_, _) -> NoChain
+
 updateNormalEdge : EdgeId -> (NormalEdgeLabel -> NormalEdgeLabel) -> Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel
 updateNormalEdge id f =
     Graph.updateEdge id 
      (mapNormalEdge f)
+
+updateStyleEdges : (ArrowStyle -> Maybe ArrowStyle) 
+        -> List (Edge EdgeLabel) -> Graph NodeLabel EdgeLabel -> Maybe (Graph NodeLabel EdgeLabel)
+updateStyleEdges update edges g =
+     let updateStyle e = update e.label.details.style 
+                           |> Maybe.map (\newStyle ->
+                              { id = e.id , style = newStyle }
+                           )                    
+     in
+     let newEdges =  edges
+                 |> List.filterMap filterEdgeNormal
+                 |> List.filterMap updateStyle
+     in
+     let updateEdge edge graph =            
+              updateNormalEdge edge.id 
+              (\ e -> { e | style = edge.style})
+              graph
+     in
+     if newEdges == [] then Nothing else
+     let newGraph = List.foldl updateEdge g newEdges in
+     Just newGraph
 
 
 exportQuiver : Int -> Graph NodeLabel EdgeLabel -> JEncode.Value
@@ -162,16 +275,23 @@ exportQuiver sizeGrid g =
   JEncode.list identity <|
   [JEncode.int 0, JEncode.int <| List.length nodes] ++ jnodes ++ jedges
 
-newNodeLabel : Point -> String -> Bool -> NodeLabel
-newNodeLabel p s isMath = 
+newNodeLabel : Point -> String -> Bool -> Int -> NodeLabel
+newNodeLabel p s isMath zindex = 
     { pos = p , label = s, dims = Nothing, selected = False, weaklySelected = False,
-                         isMath = isMath}
+                         isMath = isMath, zindex = zindex, isCoqValidated = False}
+
+makeProofString : String -> String
+makeProofString s = "\\" ++ coqProofTexCommand ++ "{" ++ s ++ "}"
+
+newProofLabel : Point -> String -> NodeLabel
+newProofLabel p s =
+   newNodeLabel p (makeProofString s) True defaultZ
 
 newGenericLabel : a -> GenericEdge a
 newGenericLabel d = { details = d,
                       selected = False,
                       weaklySelected = False,
-                      zindex = 0}
+                      zindex = defaultZ}
 
 newEdgeLabel : String -> ArrowStyle -> EdgeLabel
 newEdgeLabel s style = newGenericLabel <| NormalEdge { label = s, style = style, dims = Nothing }
@@ -187,9 +307,21 @@ emptyEdge = newEdgeLabel "" ArrowStyle.empty
 createNodeLabel : Graph NodeLabel EdgeLabel -> String -> Point -> (Graph NodeLabel EdgeLabel,
                                                                        NodeId, Point)
 createNodeLabel g s p =
-    let label = newNodeLabel p s True in
+    let label = newNodeLabel p s True defaultZ in
     let (g2, id) = Graph.newNode g label in
      (g2, id, p)
+
+createProofNode : Graph NodeLabel EdgeLabel -> String -> Bool -> Point -> Graph NodeLabel EdgeLabel
+createProofNode g s coqValidated p =
+    let label = newProofLabel p s in
+    let (g2, id) = Graph.newNode g { label | isCoqValidated = coqValidated } in
+     g2
+
+createValidProofAtBarycenter : Graph NodeLabel EdgeLabel -> List (Node NodeLabel) -> String -> Graph NodeLabel EdgeLabel
+createValidProofAtBarycenter g nodes proof =
+   let nodePositions = Debug.log "Node positions" <| List.map (.label >> .pos) <| nodes in
+   createProofNode g proof True
+          <| Geometry.Point.barycenter nodePositions
 
 getNodeLabelOrCreate : Graph NodeLabel EdgeLabel -> String -> Point -> (Graph NodeLabel EdgeLabel,
                                                                        NodeId, Point)
@@ -240,8 +372,11 @@ addNodesSelection g f =
 selectAll : Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel
 selectAll g = addNodesSelection g (always True)
 
+isTrueSelection : Graph NodeLabel EdgeLabel -> Bool
+isTrueSelection g = Graph.any .selected .selected g
+
 fieldSelect : Graph NodeLabel EdgeLabel -> ({ a | selected : Bool, weaklySelected : Bool} -> Bool)
-fieldSelect g = if Graph.any .selected .selected g then .selected else .weaklySelected
+fieldSelect g = if isTrueSelection g then .selected else .weaklySelected
 
 selectedGraph : Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel
 selectedGraph g = 
@@ -292,6 +427,11 @@ clearSelection g =
   Graph.map (\_ n -> {n | selected = False})
             (\_ e -> {e | selected = False}) g
 
+clearWeakSelection : Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel
+clearWeakSelection g =
+  Graph.map (\_ n -> {n | weaklySelected = False})
+            (\_ e -> {e | weaklySelected = False}) g
+
 
 getNodesAt : Graph NodeLabel e -> Point -> List NodeId
 getNodesAt g p =
@@ -334,12 +474,11 @@ unselect id = Graph.update id
 
 weaklySelect : Graph.Id -> Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel
 weaklySelect id = 
-      Graph.map 
-         (\_ n -> { n | weaklySelected = False})
-         (\_ e -> { e | weaklySelected = False})
-         >>
-      Graph.update id 
-               (\ n -> { n | weaklySelected = True})
+      weaklySelectMany [id]
+weaklySelectMany : List Graph.Id -> Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel
+weaklySelectMany ids g =
+   clearWeakSelection g 
+   |> Graph.updateList ids  (\ n -> { n | weaklySelected = True})
                (\ e -> { e | weaklySelected = True}) 
 
 
@@ -348,13 +487,9 @@ selectEdges = List.foldl (\ e -> Graph.updateEdge e (\n -> {n | selected = True}
 
 getSurroundingDiagrams : Point -> Graph NodeLabel EdgeLabel -> List Diagram
 getSurroundingDiagrams pos gi =   
-   let gp = toProofGraph gi in
-   let isInDiag d =
-           Graph.getNodes (GraphProof.nodesOfDiag d)
-               gi |> List.map (.label >> .pos) |> Point.isInPoly pos
-   in     
+   let gp = toProofGraph gi in 
    GraphProof.getAllValidDiagrams gp 
-            |> List.filter isInDiag
+            |> List.filter (GraphProof.isInDiag gp pos)
    
 
 selectSurroundingDiagram : Point -> Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel
@@ -365,26 +500,14 @@ selectSurroundingDiagram pos gi =
           let edges = GraphProof.edgesOfDiag d |> IntDict.keys in
           selectEdges (clearSelection gi) edges
 
-
-cloneSelected : Graph NodeLabel EdgeLabel -> Point -> 
-                Graph NodeLabel EdgeLabel
-cloneSelected g offset =
-  let g2 = selectedGraph g |> 
-       Graph.map (\_ n -> {n | pos = Point.add n.pos offset, selected = True })
-         (\_ e -> {e | selected = True } )
-  in
-  let gclearSel = clearSelection g in
-  Graph.union gclearSel g2
-
 centerOfNodes : List (Node NodeLabel) -> Point
 centerOfNodes nodes = ((Geometry.rectEnveloppe <| List.map (.pos << .label) nodes) |> Geometry.centerRect)
 
-mergeWithSameLoc : Node NodeLabel -> Graph NodeLabel EdgeLabel -> (Graph NodeLabel EdgeLabel, Bool)
+mergeWithSameLoc : Node NodeLabel -> Graph NodeLabel EdgeLabel -> Maybe (Graph NodeLabel EdgeLabel)
 mergeWithSameLoc n g =
     case getNodesAt g n.label.pos |> List.filterNot ((==) n.id) of
-         [ i ] -> (Graph.removeLoops 
-              <| Graph.merge i n.id g, True)
-         _ -> (g, False)
+         [ i ] -> Just (Graph.removeLoops <| Graph.recursiveMerge i n.id g)
+         _ -> Nothing
 
 findReplaceInSelected : Graph NodeLabel EdgeLabel -> {search : String, replace: String} ->  Graph NodeLabel EdgeLabel
 findReplaceInSelected g r =
@@ -414,6 +537,45 @@ unnamedGraph =
    Graph.keepBelow (.label >> String.isEmpty)
      (.label >> String.isEmpty) -}
 
+posGraph : Graph NodeLabel EdgeLabel -> 
+   Graph NodeLabel
+         {label : EdgeLabel, bezier : Maybe QuadraticBezier}
+posGraph g = 
+      let padding = 5 in
+      let computeEdge _ n1 n2 e = 
+            
+             case e.details of
+               PullshoutEdge -> 
+                 {label = e, posDims = { pos = (0, 0), dims = (0, 0)}, bezier = Nothing}
+               NormalEdge l ->
+                   let q = Geometry.segmentRectBent n1 n2 l.style.bend in
+                   {label = e, 
+                    posDims = 
+                         {
+                             pos = Bez.middle q,
+                             dims = (padding, padding) |> Point.resize 4
+                         },
+                     bezier = Just q}
+            
+      in
+      Graph.mapRecAll     
+              .posDims .posDims      
+              (\id n -> { 
+                      label = n,
+                      posDims = {
+                      dims =                       
+                     --  if n.editable then (0, 0) else
+                      -- copied from source code of Collage                         
+                         getNodeDims n, 
+                      pos = n.pos
+                      } |> Geometry.pad padding
+                       } )
+                 computeEdge
+              g
+   |> Graph.map 
+       (\_ {label} -> label) 
+       (\_ {label, bezier } -> { bezier = bezier, label = label })
+
 closest : Point -> Graph NodeLabel EdgeLabel -> Graph.Id
 -- ordered by distance to Point
 closest pos ug =
@@ -421,33 +583,25 @@ closest pos ug =
    case getNodesAt ug pos of
      t :: _ -> t
      _ -> 
+        let edgeDistance e = 
+             Maybe.map Bez.middle e.bezier |>
+                        Maybe.map (Point.distance pos)
+        in
+        let ug2 = posGraph ug 
+                 |> Graph.map 
+                   (always <| distanceToNode pos)
+                   (always edgeDistance)
+        in
    
-   
-         -- we need the pos
-         let ug2 = Graph.mapRecAll .pos .pos 
-               (\ _ n -> { distance = distanceToNode pos n, pos = n.pos})
-               (\ _ p1 p2 e -> 
-                  let epos = Point.middle p1 p2 in
-                  { pos = epos,
-                    distance = Point.distance pos <| Point.middle p1 p2
-                  })
-                  
-               ug
-         in
-         let getEmptysDistance l = l
-               -- |> List.filter (.label >> .empty)
-               |> List.map (\ o -> 
-                           {  id = o.id, 
-                              distance = o.label.distance})
-               
-         in
-         let unnamedEdges = Graph.edges ug2 |> getEmptysDistance in
-         let unnamedNodes = Graph.nodes ug2 |> getEmptysDistance in
-         let unnamedAll = unnamedEdges ++ unnamedNodes 
-               |> List.minimumBy .distance 
+        let unnamedEdges = Graph.edges ug2 |> List.filterMap 
+                           (\ {id, label} -> Maybe.map (\ l -> {id = id, label = l}) label)
+            unnamedNodes = Graph.nodes ug2 
+        in
+        let unnamedAll = unnamedEdges ++ unnamedNodes 
+               |> List.minimumBy .label 
                |> Maybe.map .id
                |> Maybe.withDefault 0
-         in
+        in
          unnamedAll
 {- 
 
@@ -488,3 +642,8 @@ makeSelection g =
       g
    else
       addWeaklySelected g
+
+rectEnveloppe : Graph NodeLabel EdgeLabel -> Geometry.Rect
+rectEnveloppe g =
+   let points = Graph.nodes g |> List.map (.label >> .pos) in
+   Geometry.rectEnveloppe points

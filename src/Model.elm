@@ -1,19 +1,22 @@
 module Model exposing (..)
 
 
-import Color exposing (..)
 import GraphDrawing exposing (..)
 import Polygraph as Graph exposing (EdgeId, NodeId, Graph, Node)
 import Msg exposing (..)
 import Geometry.Point as Point exposing (Point)
 import InputPosition
-import GraphDefs exposing (NodeLabel, EdgeLabel, newNodeLabel)
+import GraphDefs exposing (NodeLabel, EdgeLabel, newNodeLabel, coqProofTexCommand)
 import HtmlDefs
+import List.Extra
 
 import Modes exposing (Mode(..))
 
-import Format.GraphInfo exposing (defaultGridSize, GraphInfo)
+import Format.GraphInfo exposing (GraphInfo, Tab)
 import ParseLatex
+import Polygraph exposing (empty)
+import Html exposing (q)
+import Zindex exposing (backgroundZ, defaultZ)
 
 
 
@@ -25,8 +28,11 @@ depthHistory = 20
 minSizeGrid = 2
 maxSizeGrid = 500
 
-type alias Model =
-    { graph : Graph NodeLabel EdgeLabel
+
+
+type alias Model = {
+  -- only one tab should be active
+      tabs : List Tab
     , history : List GraphInfo
     -- , selectedObjs : List Obj
     , mousePos : Point
@@ -38,8 +44,11 @@ type alias Model =
       quickInput : String
     , mode : Mode
     , hideGrid : Bool
-    , sizeGrid : Int
+    -- filename in the web version / full path in the electron version
     , fileName : String
+    , showOverlayHelp : Bool
+    -- do we add a proof node when creating a square?
+    , squareModeProof : Bool
     -- whether there is an id which is "hovered on"
    -- , hoverId : Maybe Graph.Id
     -- , selOnMove : Bool
@@ -48,10 +57,11 @@ type alias Model =
     -- quickInput : Maybe NonEmptyChain
     , mouseOnCanvas : Bool
     -- blitzFlag : Bool
-    , bottomText : String
+    -- , bottomText : String
     , autoSave : Bool
     , latexPreamble : String
     , scenario : Scenario
+    , defaultGridSize : Int
     }
 
 
@@ -59,11 +69,11 @@ undo : Model -> Model
 undo m = popHistory <| updateWithGraphInfo m <| peekHistory m
 
 toGraphInfo : Model -> GraphInfo
-toGraphInfo m = { graph = m.graph, sizeGrid = m.sizeGrid, latexPreamble = m.latexPreamble }
+toGraphInfo m = { tabs = m.tabs, latexPreamble = m.latexPreamble }
 
 updateWithGraphInfo : Model -> GraphInfo -> Model
-updateWithGraphInfo m {graph, sizeGrid, latexPreamble} = 
-   { m | graph = graph, sizeGrid = sizeGrid, latexPreamble = latexPreamble}
+updateWithGraphInfo m {tabs, latexPreamble} = 
+   { m | tabs = tabs, latexPreamble = latexPreamble}
 
 clearHistory : Model -> Model
 clearHistory m = { m | history = [] }
@@ -77,16 +87,143 @@ pushHistory m = { m | history = List.take depthHistory (toGraphInfo m :: m.histo
 popHistory : Model -> Model
 popHistory m = { m | history = List.tail m.history |> Maybe.withDefault []}
 
-modedSizeGrid : Model -> Int
-modedSizeGrid m = 
+
+
+emptyTab : Tab
+emptyTab = { active = True, title = "1", sizeGrid = 200, graph = Graph.empty}
+
+getActiveTabInTabs : List Tab -> Tab
+getActiveTabInTabs tabs =
+   List.Extra.find .active tabs |> Maybe.withDefault emptyTab
+
+getActiveTab : Model -> Tab
+getActiveTab m = 
+  getActiveTabInTabs m.tabs
+
+
+updateFirstTab : Model -> (Tab -> Tab) -> Model
+updateFirstTab m f =
+   case m.tabs of
+     [] -> m
+     t :: q -> {m | tabs = f t :: q}
+
+clearActiveTabs : List Tab -> List Tab
+clearActiveTabs tabs =
+  List.map (\t -> {t | active = False}) tabs
+
+activateNthTab : Model -> Int -> Model
+activateNthTab m i =
+  let tabs = 
+         clearActiveTabs m.tabs
+         |> List.Extra.updateAt i (\t -> {t | active = True})
+  in 
+    { m | tabs = tabs }
+
+activateFirstTab : Model -> Model
+activateFirstTab m =
+  activateNthTab m 0
+
+removeActiveTabs : Model -> Model
+removeActiveTabs m =
+   let tabs = List.filter (not << .active) m.tabs in 
+   case tabs of 
+     [] -> m
+     _ -> 
+       let m2 = pushHistory m in
+       activateFirstTab { m2 | tabs = tabs }
+
+nextTabName : Model -> String
+nextTabName m =
+   let n = Maybe.withDefault 0 <| List.maximum <| List.filterMap (.title >> String.toInt) m.tabs in
+   String.fromInt (1 + n)
+
+
+createNewTab : Model -> String -> Model
+createNewTab m title =
+  let sizeGrid = getActiveSizeGrid m in
+  { m | tabs = clearActiveTabs m.tabs ++ 
+    [ 
+      { graph = Graph.empty ,
+        sizeGrid = sizeGrid ,
+        title = title ,
+        active = True
+      }
+    ]
+  }
+
+duplicateTab : Model -> String -> Model
+duplicateTab m title =
+  let tab = getActiveTab m in 
+  { m | tabs = clearActiveTabs m.tabs ++ 
+    [ 
+      { tab |
+        title = title ,
+        active = True
+      }
+    ]
+  }
+
+swapActiveTab : List Tab -> Bool -> List Tab
+swapActiveTab l forward =
+  case l of 
+     t1 :: t2 :: q -> 
+          if (forward && t1.active) || (not forward && t2.active) then 
+            t2 :: t1 :: q 
+          else 
+            t1 :: swapActiveTab (t2 :: q) forward
+     _ -> l
+      
+            
+
+moveTabRight : Model -> Model
+moveTabRight m = {m | tabs = swapActiveTab m.tabs True}
+
+
+moveTabLeft : Model -> Model
+moveTabLeft m = {m | tabs = swapActiveTab m.tabs False}
+
+updateActiveTab : Model -> (Tab -> Tab) -> Model
+updateActiveTab m f = { m | tabs = List.Extra.updateIf .active f m.tabs }
+
+renameActiveTab : Model -> String -> Model
+renameActiveTab m s =
+   updateActiveTab m <|
+   \ t -> {t | title = s}
+
+getActiveGraph : Model -> Graph NodeLabel EdgeLabel
+getActiveGraph m =
+  getActiveTab m |> .graph
+
+getActiveTitle m =
+  getActiveTab m |> .title
+
+updateActiveGraph : Model -> (Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel)
+   -> Model
+updateActiveGraph m f =
+  updateActiveTab m <| \t -> { t | graph = f t.graph}
+  
+setActiveGraph : Model -> Graph NodeLabel EdgeLabel -> Model
+setActiveGraph m g = 
+  updateActiveGraph m <| always g
+
+getActiveSizeGrid : Model -> Int
+getActiveSizeGrid m = getActiveTab m |> .sizeGrid
+
+getCurrentSizeGrid : Model -> Int
+getCurrentSizeGrid m = 
   case m.mode of
       ResizeMode s -> s.sizeGrid
-      _ -> m.sizeGrid
+      _ -> getActiveSizeGrid m
+
+setActiveSizeGrid : Model -> Int -> Model
+setActiveSizeGrid m s =
+    updateActiveTab m <| \t -> { t | sizeGrid = s}
+
 
 setSaveGraph : Model -> Graph NodeLabel EdgeLabel -> Model
 setSaveGraph m g = 
    let m2 = pushHistory m in
-   { m2 | graph = g }
+   setActiveGraph m2 g
 
 
 -- inputPositionPoint : Point -> InputPosition -> Point
@@ -96,9 +233,11 @@ setSaveGraph m g =
 --       InputPosKeyboard p -> Point.add source <| deltaKeyboardPos p)
 
 
-createModel : Int -> Graph NodeLabel EdgeLabel -> Model
-createModel sizeGrid g =
-    { graph = g
+createModel : Int -> Model
+createModel sizeGrid =
+    let g = Graph.empty in
+    { tabs = [ { active = True, graph = g, sizeGrid = sizeGrid, title = "1" } ]
+    , defaultGridSize = sizeGrid
     , history = []
     , mode = DefaultMode
     , statusMsg = ""
@@ -109,13 +248,14 @@ createModel sizeGrid g =
       quickInput = ""
     , mousePos = ( 0, 0 )
     , specialKeys = { ctrl = False, alt = False, shift = False }
-    , hideGrid = True
-    , sizeGrid = sizeGrid
+    , hideGrid = False
     , fileName = "graph.json"
-    , bottomText = ""
-    , autoSave = True
-    , latexPreamble = ""
+    -- , bottomText = ""
+    , autoSave = False
+    , latexPreamble = "\\newcommand{\\" ++ coqProofTexCommand ++ "}[1]{\\checkmark}"
     , scenario = Standard
+    , showOverlayHelp = False
+    , squareModeProof = False    
     --, hoverId = Nothing
     -- whether we should select the closest object 
     -- when moving the mouse
@@ -130,10 +270,8 @@ createModel sizeGrid g =
     -- blitzFlag = False
     }
 
-iniModel : Model
-iniModel = 
-   let sizeGrid = defaultGridSize in
-   
+-- iniModel : Model
+-- iniModel =    
   {-  let dbg = Debug.log "test" 
         <| ParseLatex.convertString """
     \\Diag{%
@@ -179,14 +317,14 @@ iniModel =
 
          """
    in -}
-   let graph = {- dbg -} Nothing |> Maybe.map (ParseLatex.buildGraph sizeGrid) |>
-               Maybe.withDefault Graph.empty
-   in
-   createModel sizeGrid <| graph
-      {- Tuple.first <|
-        Graph.newNode Graph.empty
-         { pos = (sizeGrid / 2, sizeGrid / 2), label = "", dims = Nothing,
-           selected = True } -}
+--    let graph = {- dbg -} Nothing |> Maybe.map (ParseLatex.buildGraph sizeGrid) |>
+--                Maybe.withDefault Graph.empty
+--    in
+--    createModel sizeGrid <| graph
+--       {- Tuple.first <|
+        -- Graph.newNode Graph.empty
+        --  { pos = (sizeGrid / 2, sizeGrid / 2), label = "", dims = Nothing,
+        --    selected = True } -}
 
 initialise_RenameModeWithDefault : Bool -> List (Graph.Id, String) -> Model -> Model
 initialise_RenameModeWithDefault save l m =
@@ -200,7 +338,8 @@ initialise_RenameMode : Bool -> List Graph.Id -> Model -> Model
 initialise_RenameMode save l m =
     let ls =  List.filterMap 
               (\id -> 
-                GraphDefs.getLabelLabel id m.graph
+                getActiveGraph m |>
+                GraphDefs.getLabelLabel id 
                 |> Maybe.map (\s -> (id, s))
               
               ) l
@@ -211,7 +350,7 @@ initialise_RenameMode save l m =
 
 addOrSetSel : Bool -> Graph.Id -> Model -> Model
 addOrSetSel keep o m =
-   {m | graph = GraphDefs.addOrSetSel keep o m.graph }
+   updateActiveGraph m (GraphDefs.addOrSetSel keep o)
         
       
 
@@ -240,19 +379,21 @@ addOrSetSel keep o m =
 -- True if created
 
 
-mayCreateTargetNodeAt : Model -> Point -> String -> ( ( Graph NodeLabel EdgeLabel, NodeId ), Bool )
-mayCreateTargetNodeAt m pos s =
-   case GraphDefs.getNodesAt m.graph pos of
-      [ n ] -> ((m.graph, n), False)
+-- TODO: check if it is still used
+mayCreateTargetNodeAt : Model -> Point -> String -> Bool -> ( ( Graph NodeLabel EdgeLabel, NodeId ), Bool )
+mayCreateTargetNodeAt m pos s isDefaultZ =
+   let g = getActiveGraph m in
+   case GraphDefs.getNodesAt g pos of
+      [ n ] -> ((g, n), False)
       _ ->
-            ( Graph.newNode m.graph 
-              <| newNodeLabel pos s True
+            ( Graph.newNode g 
+              <| newNodeLabel pos s True (if isDefaultZ then defaultZ else backgroundZ)
             , True )
 
 -- only Nodes ?
-mayCreateTargetNode : Model -> String -> ( ( Graph NodeLabel EdgeLabel, NodeId ), Bool )
-mayCreateTargetNode m s =
-  mayCreateTargetNodeAt m m.mousePos s
+mayCreateTargetNode : Model -> String -> Bool -> ( ( Graph NodeLabel EdgeLabel, NodeId ), Bool )
+mayCreateTargetNode m =
+  mayCreateTargetNodeAt m m.mousePos
     
 
 
@@ -279,9 +420,22 @@ collageGraphFromGraph _ g =
 
 keyboardPosToPoint : Model -> NodeId -> (Int, Int) -> Point
 keyboardPosToPoint m chosenNode p =
-   case Graph.getNode chosenNode m.graph of
+   case Graph.getNode chosenNode <| getActiveGraph m of
       Nothing -> m.mousePos
       Just { pos } -> 
-         let delta = InputPosition.deltaKeyboardPos m.sizeGrid p in
+         let delta = InputPosition.deltaKeyboardPos (getActiveSizeGrid m) p in
          Point.add pos delta
 
+toggleHelpOverlay : Model -> Model
+toggleHelpOverlay model = {model | showOverlayHelp = not model.showOverlayHelp } 
+
+restrictSelection : Model -> Model
+restrictSelection model = 
+    let modelGraph = getActiveGraph model in
+    let sizeGrid = getActiveSizeGrid model in
+       { model |
+                           tabs = [ {graph = GraphDefs.selectedGraph modelGraph
+                               , sizeGrid = sizeGrid, title = getActiveTitle model, 
+                               active = True }]
+      }
+              

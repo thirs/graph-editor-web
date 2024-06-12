@@ -23,9 +23,10 @@ import Geometry.Point exposing (Point)
 
 initialise : Model -> ( Model, Cmd Msg )
 initialise m =
-    GraphDefs.selectedEdgeId m.graph 
+    let modelGraph = (getActiveGraph m) in
+    GraphDefs.selectedEdgeId modelGraph
     |> Maybe.andThen (\id ->      
-        Graph.getEdge id m.graph
+        Graph.getEdge id modelGraph
         |> Maybe.andThen (\ e -> 
           GraphDefs.filterNormalEdges e.label.details
           |> Maybe.map (\ l -> 
@@ -53,7 +54,7 @@ nextStep model finish state =
          
     let
         info =
-            stateInfo model state
+            stateInfo finish model state
     in
     let m2 = addOrSetSel False info.movedNode <| setSaveGraph model info.graph in
      if finish then ({ m2 | mode = DefaultMode }, computeLayout())  else
@@ -95,15 +96,16 @@ type alias Info = { graph : Graph NodeLabel EdgeLabel,
 
 guessPosition : Model -> SplitArrowState -> Point
 guessPosition m s = 
-     case Graph.getNodes [s.source, s.target] m.graph
+     case Graph.getNodes [s.source, s.target] (getActiveGraph m)
                         |> List.map (.label >> .pos)  of
        [p1, p2] -> Geometry.Point.middle p1 p2
        _ -> m.mousePos
 
-stateInfo : Model -> SplitArrowState -> Info
-stateInfo m state =
+stateInfo : Bool -> Model -> SplitArrowState -> Info
+stateInfo finish m state =
+    let modelGraph = getActiveGraph m in
     let otherLabel = 
-              m.graph |> GraphDefs.getLabelLabel 
+              (getActiveGraph m) |> GraphDefs.getLabelLabel 
               (if state.labelOnSource then 
                  state.target 
                else 
@@ -112,12 +114,12 @@ stateInfo m state =
     in
     let
         ( ( g, n ), created ) =
-          let makeInfo pos = mayCreateTargetNodeAt m pos otherLabel in
+          let makeInfo pos = mayCreateTargetNodeAt m pos otherLabel finish in
            if state.guessPos then
              makeInfo (guessPosition m state)
            else
             case state.pos of
-              InputPosGraph id -> ((m.graph, id), False)
+              InputPosGraph id -> ((modelGraph, id), False)
               _ -> makeInfo m.mousePos                              
            
     in
@@ -131,7 +133,8 @@ stateInfo m state =
     in
     let (g1, ne1) = (Graph.newEdge g state.source n l1) in
     let (g2, ne2) = (Graph.newEdge g1 n state.target l2) in
-    { graph = Graph.removeEdge state.chosenEdge g2,
+    -- TODO: it would be more efficient to just move the source/target of the chosenEdge
+    { graph = Graph.merge (if state.labelOnSource then ne1 else ne2) state.chosenEdge g2,
       created = created,
       movedNode = n,
       ne1 = ne1,
@@ -148,7 +151,7 @@ graphDrawing : Model -> SplitArrowState -> Graph NodeDrawingLabel EdgeDrawingLab
 graphDrawing m state =
     let
         info =
-            stateInfo m state
+            stateInfo False m state
     in
     collageGraphFromGraph m info.graph        
 
@@ -159,6 +162,7 @@ update state msg model =
     let updateState st = { model | mode = SplitArrow st } in
     let updatePos st = InputPosition.updateNoKeyboard st.pos msg in
     case msg of  
+        KeyChanged False _ (Character '?') -> noCmd <| toggleHelpOverlay model
         KeyChanged False _ (Control "Escape") -> switch_Default model
         KeyChanged False _ (Character '/') -> noCmd <| updateState
            { state | labelOnSource = not state.labelOnSource } 
@@ -180,7 +184,9 @@ update state msg model =
            
 help : String
 help =
-            "[ESC] cancel, [click] name the point (if new), "
+            "[ESC] cancel, " ++
+            HtmlDefs.overlayHelpMsg 
+            ++ ", [click] name the point (if new), "
             ++ "[/] to move the existing label on the other edge, "
             ++ "[RET] terminate the square creation"             
              

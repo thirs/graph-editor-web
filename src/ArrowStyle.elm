@@ -6,20 +6,22 @@ module ArrowStyle exposing (ArrowStyle, empty, {- keyUpdateStyle, -} quiverStyle
    controlChars,
    toggleDashed, dashedStr, -- PosLabel(..),
    -- quiver
-    LabelAlignment(..),
-    keyMaybeUpdateStyle )
+    keyMaybeUpdateStyle,
+    keyMaybeUpdateColor)
 
 import HtmlDefs exposing (Key(..))
 
 import Geometry.Point as Point exposing (Point)
-import Svg exposing (Svg)
-import Svg.Attributes as Svg
+
+import String.Svg as Svg
+import String.Html
+import Drawing.Color as Color exposing (Color)
 import Geometry.QuadraticBezier exposing (QuadraticBezier)
-import Geometry.Epsilon exposing (norm0)
+import Geometry.Epsilon exposing (norm0, epsilon)
+import Geometry exposing (LabelAlignment(..))
 import Json.Encode as JEncode
 import List.Extra as List
 import ListExtraExtra exposing (nextInList)
-
 imgDir : String
 imgDir = "img/arrow/"
 
@@ -46,7 +48,8 @@ type alias Style = { tail : TailStyle,
                      dashed : Bool, bend : Float,
                      labelAlignment : LabelAlignment,
                      -- betweeon 0 and 1, 0.5 by default
-                     labelPosition : Float
+                     labelPosition : Float,
+                     color : Color
                     } 
 type alias ArrowStyle = Style
 
@@ -56,11 +59,13 @@ tailToString tail =
          DefaultTail -> "none"
          Hook -> "hook"
          HookAlt -> "hookalt"
+         Mapsto -> "mapsto"
 tailFromString : String -> TailStyle
 tailFromString tail =
    case tail of         
          "hook" -> Hook
          "hookalt" -> HookAlt
+         "mapsto" -> Mapsto
          _ -> DefaultTail
 
 headToString : HeadStyle -> String
@@ -95,14 +100,14 @@ alignmentFromString tail =
 empty : Style
 empty = { tail = DefaultTail, head = DefaultHead, double = False, dashed = False,
           bend = 0, labelAlignment = Left,
-          labelPosition = 0.5 }
+          labelPosition = 0.5, color = Color.black }
 
 isDouble : Style -> Basics.Bool
 isDouble { double } = double
   
 
 type HeadStyle = DefaultHead | TwoHeads | NoHead
-type TailStyle = DefaultTail | Hook | HookAlt
+type TailStyle = DefaultTail | Hook | HookAlt | Mapsto
 
 
 
@@ -114,7 +119,11 @@ toggleHead s =  { s | head = nextInList [DefaultHead, NoHead, TwoHeads] s.head }
 
 toggleHook : Style -> Style
 toggleHook s =  
-        { s | tail = nextInList [DefaultTail, Hook, HookAlt] s.tail }
+        { s | tail = nextInList [Hook, HookAlt, DefaultTail] s.tail }
+
+toggleMapsto : Style -> Style
+toggleMapsto s =  { s | tail = nextInList [Mapsto, DefaultTail] s.tail }
+
 
 toggleLabelAlignement : Style -> Style
 toggleLabelAlignement s =  
@@ -145,10 +154,12 @@ tailFileName s =
   prefixDouble s
    ++ tailToString s.tail ++ ".svg"
 
-   
+
+type alias Svg a = Svg.Svg a
+type alias SvgAttribute a = String.Html.Attribute a
      
 
-svgRotate : Point -> Float -> Svg.Attribute a
+svgRotate : Point -> Float -> SvgAttribute a
 svgRotate (x2, y2) angle = 
      Svg.transform <|         
         " rotate(" ++ String.fromFloat angle 
@@ -181,9 +192,16 @@ makeHeadTailImgs {from, to, controlPoint} style =
        <| tailFileName style ]
 
 
+-- chars used to control in keyUpdateStyle
+controlChars = "|>(=-bBA]["
+maxLabelPosition = 0.9
+minLabelPosition = 0.1
+
+-- doesn't update the color
 keyMaybeUpdateStyle : Key -> Style -> Maybe Style
 keyMaybeUpdateStyle k style = 
    case k of 
+        Character '|' -> Just <| toggleMapsto style
         Character '>' -> Just <| toggleHead style
         Character '(' -> Just <| toggleHook style
         Character '=' -> Just <| toggleDouble style
@@ -191,15 +209,27 @@ keyMaybeUpdateStyle k style =
         Character 'b' -> Just <| {style | bend = style.bend + 0.1 |> norm0}
         Character 'B' -> Just <| {style | bend = style.bend - 0.1 |> norm0}
         Character 'A' -> Just <| toggleLabelAlignement style
-        Character ']' -> Just <| {style | labelPosition = style.labelPosition + 0.1 |> min 0.9}
-        Character '[' -> Just <| {style | labelPosition = style.labelPosition - 0.1 |> max 0.1}
+        Character ']' -> if style.labelPosition + epsilon >= maxLabelPosition then Nothing else
+               Just {style | labelPosition = style.labelPosition + 0.1 |> min maxLabelPosition}
+        Character '[' -> 
+               if style.labelPosition <= minLabelPosition + epsilon then Nothing else
+               Just {style | labelPosition = style.labelPosition - 0.1 |> max minLabelPosition}
         _ -> Nothing
+
+keyMaybeUpdateColor : Key -> Style -> Maybe Style
+keyMaybeUpdateColor k style =
+   case k of 
+      Character c ->
+         -- let _ = Debug.log "char" c in 
+         Color.fromChar c
+         |> Maybe.andThen 
+            (\ color -> if color == style.color then Nothing else 
+                        Just { style | color = color})
+      _ -> Nothing
 
 --keyUpdateStyle : Key -> Style -> Style
 --keyUpdateStyle k style = keyMaybeUpdateStyle k style |> Maybe.withDefault style
 
--- chars used to control in keyUpdateStyle
-controlChars = ">(=-bBA]["
 
 quiverStyle : ArrowStyle -> List (String, JEncode.Value)
 quiverStyle st =
@@ -212,6 +242,7 @@ quiverStyle st =
    in
    let tailStyle = case tail of 
           DefaultTail -> []
+          Mapsto -> [("tail", [("name", "maps to")])]
           Hook -> [("tail", [("name", "hook"),("side", "top")])]
           HookAlt -> [("tail", [("name", "hook"),("side", "bottom")])]
    in
@@ -227,26 +258,37 @@ quiverStyle st =
    ++ (makeIf (st.labelPosition /= 0.5) ("label_position", JEncode.int <| floor (st.labelPosition * 100)))
 
 -- from Quiver
-type LabelAlignment =
+{-type LabelAlignment =
     Centre
   | Over
   | Left 
   | Right
+  -}
 
-tikzStyle : ArrowStyle -> String
-tikzStyle stl =
-    (case stl.tail of
-         DefaultTail -> ""
-         Hook -> "into, "
-         HookAlt -> "linto, ")
-    ++ (if stl.double then "cell=0, " else "")
-    ++ (case stl.head of
+headTikzStyle : HeadStyle -> String
+headTikzStyle hd =
+    case hd of
             DefaultHead -> "->, "
             TwoHeads -> "onto, "
             NoHead -> "-,"
+
+tikzStyle : ArrowStyle -> String
+tikzStyle stl =
+    "fore, " ++
+    Color.toString stl.color ++ "," ++
+      (case (stl.head, stl.double) of
+            (NoHead, True) -> "identity"
+            (hd, True) -> (headTikzStyle hd) ++ "cell=0.2, "
+            (hd, False) -> (headTikzStyle hd)
        )
     ++ (if stl.dashed then "dashed, " else "")
-    ++ (let bnd = stl.bend * 180 / pi in
-        if stl.bend /= 0 then
-            "bend right={" ++ String.fromFloat bnd ++ "}, "
+    ++ (if stl.bend /= 0 then
+           "curve={ratio=" ++ String.fromFloat stl.bend ++ "}, "
         else "")
+    ++  (case stl.tail of
+         DefaultTail -> ""
+         Mapsto -> "mapsto,"
+         Hook -> "into, "
+         HookAlt -> "linto, ")
+
+        

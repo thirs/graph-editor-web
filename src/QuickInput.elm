@@ -10,14 +10,19 @@ import Polygraph as Graph exposing (Graph, EdgeId, NodeId, Edge)
 import List
 import List.Extra as List
 import ArrowStyle
+import Geometry
+import GraphProof
 
 endArrowChar = '⟩'
 startSymbol = "--"
 endSymbol = "->"
 
 
-type alias Edge =  { edge : String, to : String } 
-type alias HandSide = { start : String, edges : List Edge }
+
+type alias Edge = { from : String, edge : String, to : String } 
+type alias HandSide = List Edge
+-- TODO: redefine HandSide as List { start:String, edge:Edge }
+
 
 
 type alias Equation = (HandSide, HandSide)
@@ -39,10 +44,20 @@ vertexParser : Parser String
 vertexParser = labelParser ['-', '='] -- specialChars
 
 
-edgeParser : Parser Edge
+type alias ShortEdge = { edge : String, to : String } 
+type alias ShortHandSide = { start : String, edges : List ShortEdge}
+
+handSideFromShort : ShortHandSide -> HandSide
+handSideFromShort {start, edges} =
+   case edges of
+     [] -> []
+     t :: q -> { from = start, edge = t.edge , to = t.to} 
+         :: handSideFromShort { start = t.to, edges = q}
+
+edgeParser : Parser ShortEdge
 edgeParser = 
              oneOf[
-               succeed Edge
+               succeed ShortEdge
            |. symbol startSymbol
            |. spaces
               -- some label?
@@ -53,11 +68,15 @@ edgeParser =
          
                  ]
 
-handSideParser : Parser HandSide
-handSideParser =
-    succeed HandSide
+shortHandSideParser : Parser ShortHandSide
+shortHandSideParser =
+    succeed ShortHandSide
         |= vertexParser
         |= Parser.repeat edgeParser
+
+handSideParser : Parser HandSide
+handSideParser =
+    succeed handSideFromShort |= shortHandSideParser
             
 
 equalityParser : Parser (HandSide, HandSide)
@@ -87,7 +106,7 @@ splitWithChain g ch id =
             buildGraphSegment 
             { from = n1.pos, to = n2.pos,
               fromId = edge.from, toId = edge.to,
-              edges = ch.edges,
+              edges = ch,
               alignLeft = True           
             }
             <| (Graph.removeEdge id g)            
@@ -104,11 +123,11 @@ buildGraphSegment s g =
              |> Point.resize (1 / (List.length s.edges |> toFloat))
     in
       buildGraphEdges g offset 
-        (if s.alignLeft then ArrowStyle.Left else ArrowStyle.Right)
+        (if s.alignLeft then Geometry.Left else Geometry.Right)
         s.from s.fromId s.toId s.edges
 
 
-buildGraphEdges : Graph NodeLabel EdgeLabel -> Point -> ArrowStyle.LabelAlignment 
+buildGraphEdges : Graph NodeLabel EdgeLabel -> Point -> Geometry.LabelAlignment 
            -> Point -> NodeId -> NodeId -> List Edge -> Graph NodeLabel EdgeLabel
 buildGraphEdges g offset alignment pos from to ch =
    let style =
@@ -139,15 +158,15 @@ orientEquation : Point -> Equation -> Float -> Graph NodeLabel EdgeLabel ->
                    List Segment)
 orientEquation iniP (source, but) offset g =
    
-   let nsource = List.length source.edges
-       nbut    = List.length but.edges
+   let nsource = List.length source
+       nbut    = List.length but
    in
    
    let ni1 = (nsource + 1) // 2
        nf1 = (nbut + 1) // 2
    in
-   let (source1, source2) = List.splitAt ni1 source.edges
-       (but1, but2) = List.splitAt nf1 but.edges
+   let (source1, source2) = List.splitAt ni1 source
+       (but1, but2) = List.splitAt nf1 but
    in
    let ni2 = nsource - ni1
        nf2 = nbut - nf1
@@ -165,9 +184,9 @@ orientEquation iniP (source, but) offset g =
        topRightPos = (rightX, topY)
        bottomLeftPos = (leftX, bottomY)
    in
-   let startLabel = source.start in
+   let startLabel = List.head source |> Maybe.map .from |> Maybe.withDefault "" in
    let lastLabel = List.last >> Maybe.map .to >> Maybe.withDefault "" in
-   let endLabel = lastLabel source.edges
+   let endLabel = lastLabel source
        topRightLabel = lastLabel source1 
        bottomLeftLabel = lastLabel but1
    in

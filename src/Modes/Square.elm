@@ -17,7 +17,7 @@ import ArrowStyle
 
 import GraphDrawing exposing (NodeDrawingLabel, EdgeDrawingLabel)
 import MyDiff
-import Geometry.Point exposing (Point)
+import Geometry.Point as Point exposing (Point)
 
 
 
@@ -95,7 +95,8 @@ square_setPossibility idx g chosenNode =
 
 square_updatePossibility : Model -> Int -> NodeId -> ( Model, Cmd Msg )
 square_updatePossibility m idx node =
-    square_setPossibility idx m.graph node
+    let modelGraph = getActiveGraph m in
+    square_setPossibility idx modelGraph node
         |> Maybe.map (\state -> { m | mode = SquareMode state })
         |> Maybe.withDefault m
         |> noCmd
@@ -107,7 +108,8 @@ square_updatePossibility m idx node =
 
 initialise : Model -> ( Model, Cmd Msg )
 initialise m =
-    GraphDefs.selectedNode m.graph
+    let modelGraph = getActiveGraph m in
+    GraphDefs.selectedNode modelGraph
         |> Maybe.map (.id >> square_updatePossibility m 0)
         -- |> Maybe.map
         -- -- prevent bugs (if the mouse is thought
@@ -125,7 +127,7 @@ nextStep model finish state =
          
     let
         ( info, movedNode, created ) =
-            moveNodeViewInfo model state
+            moveNodeViewInfo finish model state
     in
     let m2 = addOrSetSel False movedNode <| setSaveGraph model info.graph in
      if finish then ({ m2 | mode = DefaultMode }, computeLayout ()) else
@@ -176,15 +178,24 @@ chooseAmong l n =
 
 guessPosition : Model -> SquareState -> Point
 guessPosition m s = 
-     case Graph.getNodes [s.n1, s.chosenNode, s.n2] m.graph
+     let modelGraph = getActiveGraph m in
+     case Graph.getNodes [s.n1, s.chosenNode, s.n2] modelGraph
                         |> List.map (.label >> .pos)  of
-       [p1, p2, p3] -> Geometry.Point.diamondPave p1 p2 p3
+       [p1, p2, p3] -> Point.diamondPave p1 p2 p3
        _ -> m.mousePos
+
+guessProofPosition : Model -> SquareState -> Point -> Point
+guessProofPosition m s newPos  = 
+     let modelGraph = getActiveGraph m in
+     case Graph.getNode s.chosenNode modelGraph
+                        |> Maybe.map .pos  of
+       Just oldPos -> Point.middle oldPos newPos
+       _ -> newPos
     
    -- case Graph.getNodes
 
-moveNodeViewInfo : Model -> SquareState -> ( ViewInfo, NodeId, Bool )
-moveNodeViewInfo m data =
+moveNodeViewInfo : Bool -> Model -> SquareState -> ( ViewInfo, NodeId, Bool )
+moveNodeViewInfo finish m data =
     
     {- let insert1 x l = case l of 
              [] -> [ x ]
@@ -236,7 +247,7 @@ moveNodeViewInfo m data =
     let newPos = if data.guessPos then guessPosition m data else m.mousePos in
     let
         ( ( g, n ), created ) =
-            mayCreateTargetNodeAt m newPos labelNode
+            mayCreateTargetNodeAt m newPos labelNode finish
             -- mayCreateTargetNode m labelNode
     in
     {- let
@@ -254,6 +265,10 @@ moveNodeViewInfo m data =
     
     let (g1, ne1) = Graph.newEdge g e1n1 e1n2 <| GraphDefs.newEdgeLabel labelEdge1 ArrowStyle.empty in
     let (g2, ne2) = Graph.newEdge g1 e2n1 e2n2 <| GraphDefs.newEdgeLabel labelEdge2 ArrowStyle.empty in
+    let g3 = if not m.squareModeProof then g2 else 
+         let proofPos = guessProofPosition m data newPos in
+         GraphDefs.createProofNode g2 "naturality." False proofPos
+    in
     
         
             {- Graph.newEdge 
@@ -263,7 +278,7 @@ moveNodeViewInfo m data =
              -}
     
     let edges = makeEdges data ne1 ne2 in
-    ( { graph = g2, edges = edges }, n, created )
+    ( { graph = g3, edges = edges }, n, created )
 
 
 nToMoved : Bool -> Bool -> Bool
@@ -295,11 +310,11 @@ makeEdges data ne1 ne2 =
     }
 
 
-stateInfo : Model -> SquareState -> ViewInfo
-stateInfo m s =
+stateInfo : Bool -> Model -> SquareState -> ViewInfo
+stateInfo finish m s =
             let
                 ( info, _, _ ) =
-                    moveNodeViewInfo m s
+                    moveNodeViewInfo finish m s
             in
             info
 
@@ -318,7 +333,7 @@ graphDrawing : Model -> SquareState -> Graph NodeDrawingLabel EdgeDrawingLabel
 graphDrawing m state =
     let
         info =
-            stateInfo m state
+            stateInfo False m state
     in
     collageGraphFromGraph m info.graph
         |> graphDrawingFromInfo info.edges
@@ -328,8 +343,9 @@ update : SquareState -> Msg -> Model -> ( Model, Cmd Msg )
 update state msg model =
     let next finish = nextStep model finish state in
     case msg of   
-
-   
+        KeyChanged False _ (Character '?') -> noCmd <| toggleHelpOverlay model   
+        KeyChanged False _ (Character 'p') -> 
+                    noCmd <| { model | squareModeProof = not model.squareModeProof }
         KeyChanged False _ (Character 's') ->            
                     square_updatePossibility model state.configuration state.chosenNode
         KeyChanged False _ (Character 'a') ->
@@ -347,10 +363,12 @@ update state msg model =
         _ -> noCmd model
 
 help : String
-help =
-            "[ESC] cancel, [click] name the point (if new), "
+help = HtmlDefs.overlayHelpMsg ++ 
+            ", [ESC] cancel"
+            ++ "[click] name the point (if new), "
              ++ "[RET] terminate the square creation, "
              ++ " alternative possible [s]quares, "
-             ++ " [a]lternative possible labels."
+             ++ " [a]lternative possible labels, "
+             ++ "toggle [p]roof node creation."
              
       

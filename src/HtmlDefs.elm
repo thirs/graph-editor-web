@@ -1,7 +1,7 @@
 port module HtmlDefs exposing (onRendered, quickInputId, idInput, canvasId,
    Key(..), Keys, keyDecoder, keysDecoder, makeLatex, checkbox, slider
-   , preventsDefaultOnKeyDown, makePasteCapture,
-   bottomTextId, computeLayout, latexPreambleId, select, introHtml)
+   , preventsDefaultOnKeyDown,
+   computeLayout, latexPreambleId, select, introHtml, overlayHelpMsg)
 import Html
 import Html.Attributes
 import Html.Events
@@ -33,7 +33,8 @@ introHtml = (textHtml <| """
             (latex) labelled nodes and edges, tested with Firefox, written in <a href="https://elm-lang.org/">Elm</a> (see the code on 
         <a href="https://github.com/amblafont/graph-editor-web">github</a>).
             Higher cells are supported.
-	    You can draw anywhere, not just on the grid (whose size can be later adjusted).
+	    For a short description, see <a href="https://hal.science/hal-04407118v1">here</a>.
+        For a video demonstrating the mechanisation features, see <a href="https://github.com/amblafont/vscode-yade-example/releases/download/v0.1/demo-yade-example.mp4">here</a>.
 	    </p>
 	    <p>
 	    For LaTeX export, press (capital) 'X' after selection. The output code relies on
@@ -54,13 +55,9 @@ idInput = "edited_label"
 canvasId : String
 canvasId = "canvas"
 
-bottomTextId : String
-bottomTextId = "bottom-text"
-
 latexPreambleId : String
 latexPreambleId = "latex-preamble"
 
-pasteElement = "paste-capture"
 latexElement = "math-latex"
 
 quickInputId : String
@@ -69,7 +66,6 @@ quickInputId = "quickinput"
 renderedClass = "rendered-callback"
 renderedEvent = "rendered"
 
-pasteEvent = "pasteData"
 
 renderedDecoder : D.Decoder Point
 renderedDecoder = 
@@ -83,16 +79,6 @@ onRendered onRender =
     [ Html.Events.on renderedEvent (D.map onRender renderedDecoder),
       Html.Attributes.class renderedClass ]
 
-onPaste : (D.Value -> msg) -> Html.Attribute msg
-onPaste handler = Html.Events.on pasteEvent 
-                  <| D.map handler D.value
-
-
-makePasteCapture : (D.Value -> a) -> List (Html.Attribute a) -> List (Html.Html a) -> Html.Html a
-makePasteCapture handler attrs s =
-  Html.node pasteElement (onPaste handler :: attrs) s
-  
-   
       
 
 
@@ -171,3 +157,6 @@ slider msg name min max value =
           Html.Events.onInput (String.toInt >> Maybe.withDefault value >> msg) ] []
         , Html.text name
         ]
+
+overlayHelpMsg : String
+overlayHelpMsg = "[?] to toggle help overlay"

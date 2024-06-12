@@ -7,6 +7,7 @@ import Result
 import GraphDefs exposing (NodeLabel, EdgeLabel)
 import Polygraph as Graph
 import ArrowStyle 
+import Zindex exposing (defaultZ)
 
 
 -- type alias Node = { x : Int, y : Int, label : String }
@@ -179,14 +180,14 @@ convertString s =
           |> String.replace "$" " "
    in
   case Parser.run parseAll s2 of
-    Err e -> let _ = Debug.log "err" e in Nothing
+    Err e -> Nothing
     Ok [_ , nodes, edgesS ] -> 
-       let _ = Debug.log "Edges" edgesS in
+      --  let _ = Debug.log "Edges" edgesS in
        case Parser.run parseEdges edgesS of
-         Err e -> let _ = Debug.log "err2" e in Nothing
+         Err e -> Nothing
          Ok edges ->
             Just (nodeLabels nodes, edges)
-    l -> let _ = Debug.log "err3" l in Nothing
+    l -> Nothing
   
 buildGraph : Int -> Graph -> Graph.Graph NodeLabel EdgeLabel
 buildGraph offset (nodes, edges) =
@@ -198,19 +199,18 @@ buildGraph offset (nodes, edges) =
     let nodesPos = List.indexedMap (\ x -> 
                   List.indexedMap (\ y s -> { id =  mkId (x + 1, y + 1)
                   , label = 
-                      GraphDefs.newNodeLabel (mkPos x y) s True} ))
+                      GraphDefs.newNodeLabel (mkPos x y) s True defaultZ} ))
                   nodes |> List.concat
                   |> List.filter (\ { label } -> label.label /= "")  
-                  |> Debug.log "nodes"
+                  
                   
     in
-    let _ = Debug.log "ids" <| List.sort <| List.map .id nodesPos in
+    -- let _ = Debug.log "ids" <| List.sort <| List.map .id nodesPos in
     
     List.foldl 
        (\ {from, to, label} g -> 
-          Graph.newEdge g (from |> mkId |> Debug.log "idfrom") 
-           (Debug.log "idto" <| 
-               (to  |> mkId) )
+          Graph.newEdge g (from |> mkId)             
+               (to  |> mkId) 
             (GraphDefs.newEdgeLabel label ArrowStyle.empty)
             |> Tuple.first
        )

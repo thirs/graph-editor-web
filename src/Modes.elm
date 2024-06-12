@@ -5,7 +5,7 @@ import Geometry.Point exposing (Point)
 import Polygraph as Graph exposing (EdgeId, NodeId)
 import QuickInput
 import InputPosition exposing (InputPosition)
-import GraphDefs
+import GraphDefs exposing (NodeLabel, EdgeLabel)
 
 
 type Mode
@@ -30,13 +30,31 @@ type Mode
     -}
     | EnlargeMode EnlargeState
     | CutHead CutHeadState
-    | CloneMode
     | ResizeMode ResizeState -- current sizegrid
     | PullshoutMode PullshoutState
+    | ColorMode (List EdgeId)
 
-type alias CutHeadState = { id: Graph.EdgeId
+toString : Mode -> String
+toString m = case m of
+    DefaultMode -> "Default"
+    NewArrow _ -> "New arrow"
+    Move _ -> "Move"
+    RenameMode _ _ -> "Rename"
+    DebugMode -> "Debug"
+    QuickInputMode _ -> "QuickInput"
+    SquareMode _ -> "Square"
+    RectSelect _ -> "Rect select"
+    SplitArrow _ -> "Split arrow"
+    EnlargeMode _ -> "Enlarge"
+    CutHead _ -> "Cut head"
+    ResizeMode _ -> "Resize"
+    PullshoutMode _ -> "Pullshout"
+    ColorMode _ -> "Color"
+
+type alias CutHeadState = { edge: Graph.Edge EdgeLabel
     , head : Bool -- the head or the tail?
     , duplicate : Bool -- duplicate the arrow? 
+    -- , merge : Bool
     }
 
 isResizeMode : Mode -> Bool
@@ -50,14 +68,23 @@ type alias ResizeState =
    }
 
 type alias MoveState = 
-   { orig : Point,  -- mouse original point at the beginning of the move mode
-     -- this was used to compute the move relative to this point, but this
-     -- is no longer used
-      pos : InputPosition
-      -- , merge : Bool 
+   {   pos : InputPosition
       -- should we save at the end
-      , save : Bool
-      }
+     , save : Bool
+     , mode : MoveMode
+     , direction : MoveDirection
+    --  , merge : Bool
+  }
+type MoveDirection =
+  Free | Vertical | Horizontal
+type MoveMode = 
+    -- the move stops when we release the key
+      PressMove
+    -- the move stops when we click
+    | FreeMove
+    -- we don't know yet
+    | UndefinedMove
+    
 
 type alias EnlargeState = 
    { orig : Point, -- mouse original point at the beginning of the move mode
@@ -87,11 +114,19 @@ type alias PullshoutState =
 
 type PullshoutKind = Pullback | Pushout
 
-
+type ArrowMode =
+    CreateArrow Graph.Id
+  | CreateCylinder
+  | CreateCone
 
 
 type alias NewArrowState =
-    { chosenNode : NodeId, style : ArrowStyle, pos : InputPosition, inverted : Bool }
+    { chosen : Graph.Graph NodeLabel EdgeLabel,
+      mode : ArrowMode, 
+      style : ArrowStyle, 
+      pos : InputPosition, inverted : Bool
+      -- merge : Bool
+       }
 
 
 type alias SquareState =
