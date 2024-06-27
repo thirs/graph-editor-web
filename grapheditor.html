@@ -172,7 +172,19 @@
         const isElectron = window.electronAPI != undefined;
         var appDiv = document.getElementById('myapp');
 
-       
+        document.addEventListener('keydown', function(e) { 
+            // Desactivate globally the tab key
+            // Before, I did with ports: one to notify elm the keydown, another to tell js to prevent the default
+            // but the delay was too long and meanwhile the browser had dealt with the event.
+            if (e.keyCode == 9) 
+              e.preventDefault(); 
+
+            // Deactivate reloading with ctrl-R
+            if (e.ctrlKey && e.key === "r") 
+              e.preventDefault();            
+            
+  
+        });
      
         
          
@@ -364,7 +376,7 @@
          });
 
          app.ports.preventDefault.subscribe(function (e) {
-             e.preventDefault();
+            e.preventDefault(); 
          });
 
                   // asks the user to download some file, generated from content
@@ -627,13 +639,14 @@
                     });
             };
 
-            console.log("electron detected");
+            console.log("electron detected.");
             // window.electronAPI.loadGraph((event, json, fileName, scenario) => alert('coucou') );
             window.electronAPI.loadGraph((event, json, fileName, scenario) => sendGraphToElm(json, fileName, scenario));
-            window.electronAPI.clearGraph((event, scenario) => app.ports.clear.send(scenario));
+            window.electronAPI.clearGraph((event, fileName, scenario, latexPreamble) => {
+            app.ports.clear.send({fileName:fileName, scenario:scenario, preamble:latexPreamble});});
             window.electronAPI.setFirstTab((event, json) => sendGraphToElm(json, "", "coqlsp", false, true));
             window.electronAPI.loadEquation(function (event, equation, scenario) {
-                   console.log(equation);
+                //    console.log(equation);
                 //   app.ports.clear.send(scenario);
                 //   app.ports.promptedEquation.send(equation) ;
                 app.ports.setFirstTabEquation.send(equation);
