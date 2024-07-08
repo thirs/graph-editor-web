@@ -3,11 +3,14 @@
     <head>
         <meta charset="UTF-8">
         <title>Main</title>
+        <link rel="manifest" href="manifest.json">
         <script>
             const renderedClass = "rendered-callback";
             const renderedEvent = "rendered";
         </script>
         <script src="elm.js"></script>
+        <!-- This script is used for the open directory feature  -->
+        <script src="watcher.js"></script>
         
         <!-- The loading of KaTeX is deferred to speed up page rendering -->
         <script src="js/katex.min.css.js"></script>
@@ -20,8 +23,14 @@
              <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css" integrity="sha384-AfEj0r4/OFrOo5t7NnNe46zW/tFgW6x/bCJG8FqQCEo3+Aro6EYUG4+cU+KJWu/X" crossorigin="anonymous">
 
         
-        <!-- Make foreignobject in svg visible -->
+        
          <style>
+            /*  override vscode theme color */
+       body {
+            background-color: white;
+            color: black;
+        }
+         /* Make foreignobject in svg visible  */
           foreignObject { overflow:visible;
           /* to allow clicking through the overflow */
             pointer-events: none
@@ -100,7 +109,19 @@
                 stroke:white;
             }    
         </style> 
-        <script>         
+        <script>    
+// This is for caching the files for offline use in the PWA version
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js')
+      .then(registration => {
+        console.log('ServiceWorker registration successful with scope: ', registration.scope);
+      }, err => {
+        console.log('ServiceWorker registration failed: ', err);
+      });
+  });
+}
+        
             // LocalStorage key used for quicksave
             const storageKey = "yadegraph";
             const gridStorageKey = "yadegridsize"
@@ -139,6 +160,7 @@
 
     <body>       
         <h1>Diagram editor</h1>
+        <button id="install" hidden>Install for offline use</button>
    
      
         <!-- <p>
@@ -169,7 +191,43 @@
         <math-latex> </math-latex>
         <div id="myapp"></div>
         <script>
+let installPrompt = null;
+const installButton = document.querySelector("#install");
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  installPrompt = event;
+  installButton.removeAttribute("hidden");
+});
+
+installButton.addEventListener("click", async () => {
+  if (!installPrompt) {
+    return;
+  }
+  const result = await installPrompt.prompt();
+  console.log(`Install prompt was: ${result.outcome}`);
+  disableInAppInstallPrompt();
+});
+
+function disableInAppInstallPrompt() {
+  installPrompt = null;
+  installButton.setAttribute("hidden", "");
+}
+
         const isElectron = window.electronAPI != undefined;
+        const isFileAPI = typeof showDirectoryPicker != 'undefined';
+        const configFilename = "yade-config.json";
+        var vscode = undefined;
+        var currentFileHandle = undefined;
+        if (typeof acquireVsCodeApi != 'undefined') {
+            vscode = acquireVsCodeApi();
+        }
+
+        // copied from index.ts
+        function sendExternalMsg(key, content) {
+                vscode.postMessage({key:key, content:content})
+        }
+
         var appDiv = document.getElementById('myapp');
 
         document.addEventListener('keydown', function(e) { 
@@ -245,6 +303,19 @@
              node: appDiv,
              flags: { defaultGridSize : gridSize }
          });
+
+
+        function getFileName() {
+                var ob = document.getElementById("filename");
+                if (!ob)
+                    return "unnamed.json";
+                return ob.value;
+            }
+        function setFileName(newName) {
+            app.ports.renameFile.send(newName);
+            document.title = newName;
+        }      
+
          // we send a signal [keyInput] to elm and recieve
          // the answer on [keyOutput]
          function makeElmRequest(keyInput, keyOutput, f) {
@@ -276,34 +347,33 @@
          
 
 
-         function sendGraphToElm(json, filename, scenario = "standard", clipboard = false, setFirstTab = false) {
+         function sendGraphToElm(json, scenario = "standard", clipboard = false, setFirstTab = false) {
             var graph = json;
             var version = 0;
             if (json.hasOwnProperty('version')) {
                version = json.version;
                graph = json.graph;
             }
-            var args = { graph , fileName : filename, scenario,
+            var args = { graph , scenario,
                 clipboard, setFirstTab};
-            console.log(args);
             app.ports["loadedGraph" + version].send(args);
          }
         
          const queryString = window.location.search;
          const urlParams = new URLSearchParams(queryString);
-         var tutoData = {"graph" : tutorial, "fileName" : "graph.json", "scenario" : "standard", "clipboard" : false, 
+         var tutoData = {"graph" : tutorial, "scenario" : "standard", "clipboard" : false, 
         setFirstTab : false };
 
          if (urlParams.has("scenario") && scenarios.hasOwnProperty(urlParams.get("scenario"))) {
             scenario = urlParams.get("scenario"); 
-            sendGraphToElm(scenarios[scenario], scenario + ".json", scenario);
+            sendGraphToElm(scenarios[scenario], scenario);
          }
          else {            
             app.ports["loadedGraph" + tutorial_format_version].send(tutoData);
          }
          
          // load a json graph file, send it to the elm component
-         function openFile() {
+         var openFileFun = function() {
              var input = document.createElement('input');
              input.type = 'file';
              input.accept = ".json";
@@ -312,22 +382,150 @@
                  var fr=new FileReader();
                  fr.onload=function(){
                      var json = JSON.parse (fr.result);
-                     sendGraphToElm(json, file.name);
+                     sendGraphToElm(json);
                  }
                  fr.readAsText(file);
-                 document.title = file.name;
+                 setFileName(file.name);
+                //  document.title = file.name;
              }
 
              input.click();
          };
 
-         if (isElectron)
-            app.ports.openFile.subscribe(function (d) {
-                window.electronAPI.openFile();
-            });
-         else
-            app.ports.openFile.subscribe(openFile);
+         function openFile() {
+            openFileFun();
+         }
 
+         app.ports.openFile.subscribe(openFile);
+
+         if (isElectron)
+            openFileFun = function (d) {
+                window.electronAPI.openFile();
+            };
+
+         if(isFileAPI) {
+            // open the file picker with showFilePicker and sends the content to Elm
+            openFileFun = function() {
+                console.log("Opening file");
+                showOpenFilePicker({ types: [{ accept: { 'application/json': ['.json'] } }] })
+                .then(function (fileHandles) {
+                    if (fileHandles.length != 1) {
+                        throw new Error("No file selected");
+                    }
+                    currentFileHandle = fileHandles[0];
+                    return currentFileHandle.getFile();
+                })
+                .then(function (file) {
+                    setFileName(file.name);
+                    return file.text();
+                })
+                .then(function (text) {
+                    var json = JSON.parse(text);
+                    sendGraphToElm(json);                    
+                });
+            };
+         }
+         
+
+        function processWatchedFile(config,preamble,dirHandle) {
+            function doit() {
+              return checkWatchedFile(config,dirHandle)
+                .then(function (r) {
+                    if (r === undefined) {
+                        return;
+                    }
+                    if(!r) {
+                        app.ports.simpleMsg.send(
+                            "Waiting for incomplete diagram in " + config.watchedFile);
+                        window.onfocus =  function () {
+                            window.onfocus = function () {};
+                            doit();
+                        };
+                        return;
+                    }
+                    saveGraphFun = function(d){
+                        saveGraphFun = function (d) {};
+                        quicksaveFun = function (d) {};
+                        watchSaveDiagram(config, r, dirHandle, fromElmGraph(d.info), d.export)
+                        .then(() => { 
+                             doit();
+                    });
+                    }
+                    quicksaveFun = saveGraphFun;
+                    loadEditor(preamble, r.content);
+                });
+            };
+            doit();
+        }
+
+
+        
+        function loadEditor(defaultPreamble, diag) {
+            let stripped_diag = diag.trim();
+
+            if (stripped_diag == "") {
+                console.log("Creating new diagram");
+                app.ports.clear.send({scenario:"watch", preamble:defaultPreamble});
+            } else {
+                console.log("Loading diagram ");
+                let json = JSON.parse (stripped_diag);
+                sendGraphToElm(json, "watch");
+            }    
+        }
+
+  
+        function extractExtensionFromPath(path) {
+            var parts = path.split(".");
+            if (parts.length < 2)
+                return "";
+            return parts[parts.length - 1];
+        }
+
+        app.ports.openDirectory.subscribe(
+            function() {
+                if (!isFileAPI) {
+                    alert("Your browser does not support the File System Access API");
+                    return;
+                }
+
+            showDirectoryPicker().then(function (dirHandle) { 
+                dirHandle.getFileHandle(configFilename)
+                .then((f) => f.getFile(),(e) => { 
+                      alert("Cannot access " + configFilename + ": " + e.toString());
+                     throw (e); })
+               .then((file) => file.text())
+               .then((text) => {
+                var json = JSON.parse(text);
+                if (!json.watchedFile) {
+                    alert("watchedFile unspecified in the json");
+                    return;
+                }
+                var extension = extractExtensionFromPath(json.watchedFile);
+                
+                var data = [];
+                if (extension in defaultsExt)
+                    data.push(defaultsExt[extension]);
+                else
+                    console.log("Unknown e  xtension " + extension + ".");
+                data.push(json);
+                var config = defaultConfig;
+                for (conf of data) {
+                    config = Object.assign(config, conf);
+                }
+                var promise = new Promise((resolve) => resolve("") );
+                if (config.preambleFile)
+                    promise = getTextFromFilepath(dirHandle,config.preambleFile);
+                promise.then(function(preamble) {
+                    app.ports.clear.send({scenario:"watch", preamble:preamble});
+                    processWatchedFile(config,preamble, dirHandle);
+                });
+               });
+            })
+            .catch((e) => { console.log(e); alert("Cannot access the directory"); });
+            
+             
+            }
+        );
         // load a json graph file, from local storage
         function quickloadGraph() {
             if (!supportStorage) {           
@@ -350,8 +548,9 @@
             }
             
             var json = JSON.parse(result);
-            var fileName = json.fileName;                  
-            sendGraphToElm(json, json.fileName);     
+            var fileName = json.fileName;
+            setFileName(fileName);               
+            sendGraphToElm(json);     
          };
 
 
@@ -392,11 +591,11 @@
              return {graph : a.graph, version : a.version };;
          }
 
-         function quicksaveStorage(arg) {
+         function defaultQuickSave(arg) {
             console.log("Quicksaving...");
             var a = arg.info
             var d = fromElmGraph(a);
-            d.fileName = a.fileName;
+            d.fileName = getFileName();
              // Check browser support
             if (!supportStorage) {           
                if (arg.feedback)
@@ -411,15 +610,50 @@
             if (arg.feedback)
                 alert("Successful quicksave"); 
          }
+         var quicksaveFun = function(a) {
+            defaultQuickSave(a);
+         };
+          
+         app.ports.quicksaveGraph.subscribe((e) => quicksaveFun(e));
 
          if (isElectron)
-            app.ports.quicksaveGraph.subscribe(function (a) {
+            quicksaveFun = function(a) {
                     var d = a.info;
                     var g = fromElmGraph(d);
-                    window.electronAPI.quicksaveGraph(d.fileName, g, a.export, a.feedback);
-            });
-         else
-            app.ports.quicksaveGraph.subscribe(quicksaveStorage);
+                    window.electronAPI.quicksaveGraph(getFileName(), g, a.export, a.feedback);
+            };
+        
+         function saveFileApi(arg) {
+            var a = arg.info;
+            var d = fromElmGraph(a);
+            return currentFileHandle.createWritable()
+            .then(
+                 (fileWriter) =>
+                    fileWriter.write(JSON.stringify(d))
+                    .then(() => {
+                        return fileWriter.close();
+                    })                
+            );
+         };
+         if (isFileAPI) {
+            quicksaveFun = function(arg) {
+                
+                if (!currentFileHandle) {
+                    defaultQuickSave(arg);
+                    return;
+                }
+                var feedback = arg.feedback;
+                arg.feedback = false;
+                defaultQuickSave(arg);
+                arg.feedback = feedback;
+                saveFileApi(arg)
+                .then(() => {
+                    if (arg.feedback) {
+                        alert("Successful quicksave to " + currentFileHandle.name);
+                    }
+                });
+            };
+         }
 
          app.ports.saveGridSize.subscribe(function(arg) {
             console.log("Saving grid size preferences.");
@@ -439,21 +673,33 @@
               window.open(s);             
          });
 
-         function saveGraph(b) {
-            var a = b.graph;
-            var name = a.fileName;
+         var saveGraphFun = function (b) {
+            var a = b.info;
+            var name = getFileName();
             var d = fromElmGraph(a);
             download(JSON.stringify(d), name /* + '.json' */, 'application/json');
                
             document.title = name;
          };
 
+         
+         app.ports.saveGraph.subscribe((b) => saveGraphFun(b));
+
          if (isElectron)
-            app.ports.saveGraph.subscribe(function (d) {
-                window.electronAPI.saveGraph(d.graph.fileName, fromElmGraph(d.graph), d.export);
-            });
-         else
-            app.ports.saveGraph.subscribe(saveGraph);
+            saveGraphFun = function (d) {
+                window.electronAPI.saveGraph(getFileName(), fromElmGraph(d.info), d.export);
+            };
+        if (isFileAPI) {
+            saveGraphFun = function (d) {
+                // open showsavefilepicker
+                showSaveFilePicker({ types: [{ accept: { 'application/json': ['.json'] } }] })
+                .then(function (fileHandle) {
+                    currentFileHandle = fileHandle;
+                    setFileName(currentFileHandle.name);
+                    return saveFileApi(d);
+                })
+            };
+        }
 
 
          // this event handler computes the relative position
@@ -481,7 +727,7 @@
                 catch (e) { json = false; }
                 // console.log(json);
                 if (json) {
-                    sendGraphToElm(json, "", "standard", true);
+                    sendGraphToElm(json, "standard", true);
                     // cnonsole.log(json);
                 }
                 // app.ports.onPaste.send(text); 
@@ -570,6 +816,22 @@
                 });
             });
          }
+         else if (vscode) {
+            app.ports.applyProof.subscribe(function(data){ 
+                sendExternalMsg("apply-proof", data)
+                });
+            app.ports.requestProof.subscribe((data) => {
+                customPrompt("Enter proof for " + data.statement + " (leave blank for interactive)", data.script, (proof) => {
+                    newData = {script: proof, statement:data.statement};
+                    if (proof == "") {
+                        sendExternalMsg("incomplete-equation", newData);
+                    }
+                    else {
+                        sendExternalMsg("apply-proof", newData);
+                    }
+                });
+            });
+         }
          else {
             // app.ports.incompleteEquation.subscribe((data) =>  alert(err));
             app.ports.applyProof.subscribe((data) =>  alert(err));
@@ -641,10 +903,10 @@
 
             console.log("electron detected.");
             // window.electronAPI.loadGraph((event, json, fileName, scenario) => alert('coucou') );
-            window.electronAPI.loadGraph((event, json, fileName, scenario) => sendGraphToElm(json, fileName, scenario));
+            window.electronAPI.loadGraph((event, json, fileName, scenario) => {setFileName(fileName);  sendGraphToElm(json, scenario);});
             window.electronAPI.clearGraph((event, fileName, scenario, latexPreamble) => {
-            app.ports.clear.send({fileName:fileName, scenario:scenario, preamble:latexPreamble});});
-            window.electronAPI.setFirstTab((event, json) => sendGraphToElm(json, "", "coqlsp", false, true));
+            app.ports.clear.send({scenario:scenario, preamble:latexPreamble});});
+            window.electronAPI.setFirstTab((event, json) => sendGraphToElm(json, "coqlsp", false, true));
             window.electronAPI.loadEquation(function (event, equation, scenario) {
                 //    console.log(equation);
                 //   app.ports.clear.send(scenario);
@@ -652,7 +914,7 @@
                 app.ports.setFirstTabEquation.send(equation);
             }
             );
-            window.electronAPI.rename((event, fileName) => app.ports.renameFile.send(fileName));
+            window.electronAPI.rename((event, fileName) => setFileName(fileName));
             window.electronAPI.simpleMsg((event, msg) => app.ports.simpleMsg.send(msg));
  
             // }
@@ -668,7 +930,85 @@
             );
          }
         
-         
+        /*
+
+        Interaction with vscode when embedded as a webview.
+
+        */
+       var promptCallback = undefined;
+       if (vscode) {            
+            console.log("vscode detected");
+            customPrompt = function (question, defaut, callback) {
+                promptCallback = (ret) => callback(ret);
+                vscode.postMessage({key:"prompt", content: {question: question, default: defaut}});
+            };
+            app.ports.generateProofJs.subscribe(function(script){
+                sendExternalMsg("generate-proof",processProof(script));
+            });
+       }
+
+         // copied from index.ts
+
+function loadDataFromVscode(data, filename, scenario,  setFirstTab = false) {
+
+  let stripped_diag = data.trim();
+  try {
+
+    let json = JSON.parse (stripped_diag);
+    if (setFirstTab)
+       sendGraphToElm(json, "coqlsp", false, true);
+    //   mainWindow.webContents.send('set-first-tab', json); 
+    else
+    //      mainWindow.webContents.send('load-graph', json, filename, scenario); 
+       sendGraphToElm(json, scenario);
+    }
+  catch (e) {
+      if (e instanceof SyntaxError) {
+      // if it is not a valid json, then it must be an equation 
+        let equation = stripped_diag.slice(1, -1);
+        // mainWindow.webContents.send('load-equation', equation , scenario);
+        app.ports.setFirstTabEquation.send(equation);
+      }
+      else 
+        throw e;
+  }
+}
+
+         // copied from configureIpc()
+
+         window.addEventListener("message", evt => 
+     { const msg = evt.data;
+       const validMsg = msg && typeof msg === "object" 
+                         && "key" in msg
+                         && "content" in msg;
+       if (!validMsg) {
+          console.log ("received unknown message: ");
+          console.log(msg);
+          return;
+       }
+       console.log ("received known message:");
+       console.log(msg);
+       var setFirstTab = false;
+       switch (msg.key) {
+          case "prompt": 
+              var callback = promptCallback;
+              promptCallback = undefined;
+              callback(msg.content); 
+              break;
+          case "set-first-tab":
+            setFirstTab = true;
+          case "load":
+            loadDataFromVscode(msg.content, "graph.json", "coqlsp", 
+                setFirstTab)
+            break;
+          case "applied-proof":
+            app.ports.appliedProof.send(msg.content);
+            // mainWindow.webContents.send(msg.key, msg.content);
+            break;
+             
+       }
+      }
+  );
         
         </script>
     </body>

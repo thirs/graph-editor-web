@@ -105,16 +105,16 @@ port preventDefault : JE.Value -> Cmd a
 port onKeyDownActive : (JE.Value -> a) -> Sub a
 
 
-port clear : ({fileName : String, scenario : String, preamble: String} -> a) -> Sub a
+port clear : ({scenario : String, preamble: String} -> a) -> Sub a
 
 -- tell js to save the graph, version  is the format version
-type alias JsGraphInfo = { graph : LastFormat.Graph, fileName : String, version : Int }
+type alias JsGraphInfo = { graph : LastFormat.Graph, version : Int }
 type alias ExportFormats = {tex:String, svg:String, coq:String}
 
 -- feedback: do we want a confirmation alert box?
 port quicksaveGraph : { info : JsGraphInfo, export: ExportFormats, feedback : Bool} -> Cmd a
 -- we ask js to save the graph
-port saveGraph : {graph: JsGraphInfo, export: ExportFormats} -> Cmd a
+port saveGraph : {info: JsGraphInfo, export: ExportFormats} -> Cmd a
 
 port exportQuiver : JE.Value -> Cmd a
 port alert : String -> Cmd a
@@ -125,6 +125,7 @@ port renameFile : (String -> a) -> Sub a
 
 -- we ask js to open a graph file
 port openFile : () -> Cmd a
+port openDirectory : () -> Cmd a
 -- or to retrieve the saved graph
 port quickLoad : () -> Cmd a
 -- js returns the graph
@@ -211,9 +212,8 @@ subscriptions m =
       simpleMsg SimpleMsg,
       renameFile FileName,
       promptedTabTitle RenameTab,
-      clear (\ {scenario, preamble, fileName} ->
+      clear (\ {scenario, preamble} ->
           Clear {scenario = scenarioOfString scenario
-               , fileName = fileName
                , preamble = preamble }),
       -- upload a graph (triggered by js)
       
@@ -349,7 +349,7 @@ switch_RenameMode model =
 toJsGraphInfo : Model -> JsGraphInfo
 toJsGraphInfo model= { graph = LastFormat.toJSGraph 
                                     <| Model.toGraphInfo model,
-                              fileName = model.fileName,
+                              -- fileName = model.fileName,
                               version = LastFormat.version}
 
 updateIntercept : Msg -> Model -> (Model, Cmd Msg)
@@ -431,7 +431,7 @@ update msg modeli =
     let sizeGrid = getActiveSizeGrid model in
     case msg of
      SetFirstTabEquation s -> setFirstTabEquationPerform modeli s
-     Save -> (model, saveGraph { graph = toJsGraphInfo model 
+     Save -> (model, saveGraph { info = toJsGraphInfo model 
                               , export = makeExports model })
      SaveGridSize -> ({model | defaultGridSize = sizeGrid } , saveGridSize sizeGrid)
      OptimalGridSize ->
@@ -448,12 +448,11 @@ update msg modeli =
                          { info = toJsGraphInfo model, export = makeExports model,
                          feedback = False }) 
                    else noCmd model
-     Clear {fileName, scenario,preamble} -> 
+     Clear {scenario,preamble} -> 
         let modelf = createModel model.defaultGridSize in
         let or s1 s2 = if s1 == "" then s2 else s1 in 
         noCmd { modelf | scenario = scenario,
             latexPreamble = or preamble modelf.latexPreamble
-          , fileName =  or fileName modelf.fileName
          }
          --  (iniModel, Task.attempt (always Msg.noyarn comOp) (Dom.focus HtmlDefs.canvasId))
      ToggleHideGrid -> noCmd {model | hideGrid = not model.hideGrid}     
@@ -486,7 +485,6 @@ update msg modeli =
         let scenario = scenarioOfString g.scenario in
         let m =  clearHistory <| updateWithGraphInfo { model | 
                                               mode = DefaultMode, 
-                                              fileName = g.fileName,
                                               scenario = scenario
                                             } g.graph 
         in
@@ -1595,7 +1593,10 @@ viewGraph model =
             Html.button [Html.Events.onClick (openFile () |> Do),
                Html.Attributes.id "load-button"] [Html.text "Load graph"] 
             ,  Html.button [Html.Events.onClick (quickLoad () |> Do),
-               Html.Attributes.title "Local or session storage"] [Html.text "QuickLoad graph"]     
+               Html.Attributes.title "Local or session storage"] [Html.text "QuickLoad graph"]
+            -- Button to open a directory     
+            , Html.button [Html.Events.onClick (openDirectory () |> Do),
+               Html.Attributes.title "Open a directory"] [Html.text "Open directory"]
             ]
             else []
             ),
@@ -1614,6 +1615,7 @@ viewGraph model =
                   Html.text "Filename: "
                 , Html.input  [Html.Attributes.type_ "text",                       
                         Html.Events.onInput FileName,
+                        Html.Attributes.id "filename",
                         -- Html.Events.onFocus (QuickInput ""),
                         Html.Attributes.value model.fileName
                         ] []
@@ -1624,7 +1626,7 @@ viewGraph model =
              Html.button [Html.Events.onClick Save, Html.Attributes.id "save-button", 
                Html.Attributes.title "Opens a save dialog box"] 
                [Html.text "Save"]
-           , Html.button [Html.Events.onClick (Clear {fileName = "", scenario = model.scenario, preamble = ""})] [Html.text "Clear"]
+           , Html.button [Html.Events.onClick (Clear {scenario = model.scenario, preamble = ""})] [Html.text "Clear"]
            
            
            , Html.a [Html.Attributes.href  ("#" ++ HtmlDefs.latexPreambleId)] [Html.text "Latex preamble"]
