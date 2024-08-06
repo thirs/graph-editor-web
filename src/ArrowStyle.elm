@@ -1,13 +1,12 @@
 module ArrowStyle exposing (ArrowStyle, empty, {- keyUpdateStyle, -} quiverStyle,
-   tikzStyle, tailToString , tailFromString,
-   headToString, headFromString, 
-   alignmentToString, alignmentFromString, 
+   tikzStyle,
    isDouble, doubleSize,
    controlChars,
+   kindCodec, tailCodec, headCodec, alignmentCodec,
    toggleDashed, dashedStr, -- PosLabel(..),
    -- quiver
     keyMaybeUpdateStyle,
-    keyMaybeUpdateColor, makeHeadShape, makeTailShape)
+    keyMaybeUpdateColor, makeHeadShape, makeTailShape, getStyle, isNone, simpleLineStyle)
 
 import HtmlDefs exposing (Key(..))
 
@@ -19,7 +18,7 @@ import Json.Encode as JEncode
 import List.Extra as List
 import ListExtraExtra exposing (nextInList)
 import String.Svg as Svg exposing (Svg)
-
+import Codec exposing (Codec)
 
 doubleSize = 2.5
 
@@ -29,67 +28,70 @@ type PosLabel =
    | LeftPosLabel
    | RightPosLabel -}
 type alias Style = { tail : TailStyle, 
-                     head : HeadStyle, double : Bool, 
+                     head : HeadStyle, kind : ArrowKind, 
                      dashed : Bool, bend : Float,
                      labelAlignment : LabelAlignment,
                      -- betweeon 0 and 1, 0.5 by default
                      labelPosition : Float,
                      color : Color
                     } 
-type alias ArrowStyle = Style
 
-tailToString : TailStyle -> String
-tailToString tail =
-   case tail of
-         DefaultTail -> "none"
-         Hook -> "hook"
-         HookAlt -> "hookalt"
-         Mapsto -> "mapsto"
-tailFromString : String -> TailStyle
-tailFromString tail =
-   case tail of         
-         "hook" -> Hook
-         "hookalt" -> HookAlt
-         "mapsto" -> Mapsto
-         _ -> DefaultTail
-
-headToString : HeadStyle -> String
-headToString head =
-  case head of
-       DefaultHead -> "default" 
-       TwoHeads    -> "twoheads" 
-       NoHead      -> "none"
-
-headFromString : String -> HeadStyle
-headFromString head =
-  case head of        
-       "twoheads" -> TwoHeads    
-       "none" -> NoHead      
-       _ -> DefaultHead
-
-alignmentToString : LabelAlignment -> String
-alignmentToString tail =
-   case tail of
-         Centre -> "centre"
-         Over -> "over"
-         Left -> "left"
-         Right -> "right"
-alignmentFromString : String -> LabelAlignment
-alignmentFromString tail =
-   case tail of         
-         "centre" -> Centre
-         "right" -> Right
-         "over" -> Over
-         _ -> Left
-
-empty : Style
-empty = { tail = DefaultTail, head = DefaultHead, double = False, dashed = False,
+simpleLineStyle : Style
+simpleLineStyle = { tail = DefaultTail, head = NoHead, kind = NormalArrow, dashed = False,
           bend = 0, labelAlignment = Left,
           labelPosition = 0.5, color = Color.black }
+type alias ArrowStyle = Style
+type ArrowKind = NormalArrow | NoneArrow | DoubleArrow
 
+kindCodec : Codec ArrowKind String
+kindCodec = 
+  Codec.enum 
+  [(NoneArrow, "none"),
+   (DoubleArrow, "double")]
+  (NormalArrow, "normal")
+
+tailCodec : Codec TailStyle String
+tailCodec = 
+  Codec.enum 
+  [(Hook, "hook"),
+   (HookAlt, "hookalt")
+    , (Mapsto, "mapsto")
+   ]
+  (DefaultTail, "none")
+
+headCodec : Codec HeadStyle String
+headCodec =
+   Codec.enum
+   [          
+       (TwoHeads,  "twoheads")
+       , (NoHead, "none")
+   ]
+   (DefaultHead, "default")
+
+alignmentCodec : Codec LabelAlignment String
+alignmentCodec = 
+  Codec.enum 
+  [(Centre, "centre"),
+   (Over, "over"),
+   (Left, "left"),
+   (Right, "right")]
+  (Left, "left")
+ 
+empty : Style
+empty = { tail = DefaultTail, head = DefaultHead, dashed = False,
+          bend = 0, labelAlignment = Left,
+          labelPosition = 0.5, color = Color.black, kind = NormalArrow }
 isDouble : Style -> Basics.Bool
-isDouble { double } = double
+isDouble { kind } = kind == DoubleArrow
   
+isNone : Style -> Bool
+isNone { kind } = kind == NoneArrow
+
+getStyle : { a | style : Style, isAdjunction : Bool} -> Style
+getStyle {style, isAdjunction} =
+   if isAdjunction then
+      { style | head = NoHead, tail = DefaultTail, kind = NoneArrow, labelAlignment = Over }
+   else style
 
 type HeadStyle = DefaultHead | TwoHeads | NoHead
 type TailStyle = DefaultTail | Hook | HookAlt | Mapsto
@@ -119,7 +121,7 @@ toggleLabelAlignement s =
 
 
 toggleDouble : Style -> Style
-toggleDouble s = { s | double = not s.double }
+toggleDouble s = { s | kind = nextInList [DoubleArrow, NormalArrow] s.kind }
   
 toggleDashed : Style -> Style
 toggleDashed s = { s | dashed = not s.dashed }
@@ -167,8 +169,9 @@ keyMaybeUpdateColor k style =
 
 quiverStyle : ArrowStyle -> List (String, JEncode.Value)
 quiverStyle st =
-   let { tail, head, double, dashed } = st in
+   let { tail, head, kind, dashed } = st in
    let makeIf b x = if b then [x] else [] in
+   let double = isDouble st in
    let headStyle = case head of 
           DefaultHead -> []       
           TwoHeads -> [("head", [("name", "epi")])]
@@ -214,10 +217,11 @@ tikzStyle : ArrowStyle -> String
 tikzStyle stl =
     "fore, " ++
     Color.toString stl.color ++ "," ++
-        (case (stl.head, stl.double) of
-            (NoHead, True) -> "identity, "
-            (hd, True) -> (headTikzStyle hd) ++ "cell=0.2, "
-            (hd, False) -> (headTikzStyle hd)
+      (case (stl.head, stl.kind) of
+            (NoHead, DoubleArrow) -> "identity,"
+            (hd, DoubleArrow) -> (headTikzStyle hd) ++ "cell=0.2, "
+            (hd, NormalArrow) -> (headTikzStyle hd)
+            (hd, NoneArrow) -> "draw=none, "
        )
     ++ (if stl.dashed then "dashed, " else "")
     ++ (if stl.bend /= 0 then
@@ -233,9 +237,11 @@ tikzStyle stl =
 -- the corresponding elm code was generated by github copilot
 makeHeadShape : Style -> Svg a
 makeHeadShape style =
+   if style.kind == NoneArrow then Svg.g [] [] else
    --   let (xh, yh) = (x - imgHeight / 2, y - imgHeight / 2) in
    --   let f = String.fromFloat in
-     case (style.double, style.head) of
+   let double = isDouble style in
+     case (double, style.head) of
          (False, DefaultHead) -> 
          {-
          The elm version of the following svg:
@@ -303,9 +309,11 @@ makeHeadShape style =
 
 makeTailShape : Style -> Svg a
 makeTailShape style =
+     if style.kind == NoneArrow then Svg.g [] [] else
+     let double = isDouble style in
    --   let (xh, yh) = (x - imgHeight / 2, y - imgHeight / 2) in
    --   let f = String.fromFloat in
-     case (style.double, style.tail) of
+     case (double, style.tail) of
          (False, Hook) -> 
 {-
   <g fill="none" stroke="#000" stroke-width=".498" stroke-miterlimit="10">

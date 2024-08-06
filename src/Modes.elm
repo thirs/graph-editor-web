@@ -11,14 +11,14 @@ import GraphDefs exposing (NodeLabel, EdgeLabel)
 type Mode
     = DefaultMode
     | NewArrow NewArrowState
+    | NewLine NewLineState
     | Move MoveState
       -- the list of ids to be edited, with associated default labels 
       -- (which may differ from the labels of the objects in the model)
       -- the boolean specifies whether we need to save the state at the
       -- end
     | RenameMode Bool (List (Graph.Id, String))
-    | DebugMode    
-    | QuickInputMode (Maybe QuickInput.Equation)
+    | DebugMode
     | SquareMode SquareState
     | RectSelect Point
     -- Bool -- keep previous selection?
@@ -38,10 +38,10 @@ toString : Mode -> String
 toString m = case m of
     DefaultMode -> "Default"
     NewArrow _ -> "New arrow"
+    NewLine _ -> "New line"
     Move _ -> "Move"
     RenameMode _ _ -> "Rename"
     DebugMode -> "Debug"
-    QuickInputMode _ -> "QuickInput"
     SquareMode _ -> "Square"
     RectSelect _ -> "Rect select"
     SplitArrow _ -> "Split arrow"
@@ -90,6 +90,7 @@ type alias EnlargeState =
    { orig : Point, -- mouse original point at the beginning of the move mode
      -- onlySubdiag : Bool,
      pos : InputPosition
+   , direction : MoveDirection
    }
 
 type alias SplitArrowState =
@@ -120,11 +121,16 @@ type ArrowMode =
   | CreateCone
 
 
+type alias NewLineState = {
+    initialPos : Point
+    }
+
 type alias NewArrowState =
     { chosen : Graph.Graph NodeLabel EdgeLabel,
       mode : ArrowMode, 
       style : ArrowStyle, 
-      pos : InputPosition, inverted : Bool
+      pos : InputPosition, inverted : Bool,
+      isAdjunction : Bool
       -- merge : Bool
        }
 

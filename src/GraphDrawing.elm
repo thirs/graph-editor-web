@@ -21,7 +21,7 @@ import EdgeShape exposing (EdgeShape(..), Hat)
 -- these are extended node and edge labels used for drawing (discarded for saving)
 type alias NormalEdgeDrawingLabel = 
    { label : String, editable : Bool,
-     style : ArrowStyle, dims : Point }
+     style : ArrowStyle, dims : Point, isAdjunction : Bool }
 
 type EdgeType = 
     PullshoutEdge
@@ -95,8 +95,9 @@ make_edgeDrawingLabel {editable, isActive, shape} e =
    { isActive = isActive, zindex = e.zindex, shape = shape,
      details = case e.details of 
         GraphDefs.PullshoutEdge -> PullshoutEdge
-        GraphDefs.NormalEdge ({label, style} as l) ->
+        GraphDefs.NormalEdge ({label, style, isAdjunction} as l) ->
            NormalEdge { label = label, editable = editable, 
+              isAdjunction = isAdjunction,
               style = style,
               dims = GraphDefs.getEdgeDims l
               -- bezier = bezier |> Maybe.withDefault Bez.dummy
@@ -243,13 +244,21 @@ segmentLabel cfg q edgeId activity label curve =
              Drawing.empty
          else 
              let finalLabel = " \\scriptstyle " ++ label.label in
+             let rotateAttr = 
+                   if label.style.labelAlignment == Geometry.Over then
+                      let angle = Point.pointToAngle <| Point.subtract q.to q.from in
+                      [ Html.Attributes.style "transform"
+                      ("rotate(" ++ String.fromFloat angle ++ "rad)")]
+                   else
+                       []
+             in
              makeLatex cfg labelpos label.dims finalLabel foregroundZ
              
              ([   MouseEvents.onClick (EdgeClick edgeId),
                   MouseEvents.onDoubleClick (EltDoubleClick edgeId),
                   MouseEvents.onMove  (always (MouseOn edgeId))
                  -- Html.Events.onMouseOver (EltHover edgeId)
-             ] ++ 
+             ] ++ rotateAttr ++  
              (activityToClasses activity |> List.map Html.Attributes.class)        
               ++
               HtmlDefs.onRendered (Msg.EdgeRendered edgeId)
@@ -267,23 +276,39 @@ makeLatex cfg pos dims label z attrs  =
 makeLatexString s = "\\(" ++ s ++ "\\)"
 withPreamble cfg s = cfg.latexPreamble ++ "\n" ++ s
 
+{-
+adjunctionArrow : Graph.EdgeId -> List String -> Int -> NormalEdgeDrawingLabel -> QuadraticBezier -> Drawing Msg
+adjunctionArrow id classes z label q =
+   let p = Bez.middle q in 
+   let angle = Point.pointToAngle <| Point.subtract q.to q.from in
+   let attrs = [ Html.Attributes.style "transform"
+                   ("rotate(" ++ String.fromFloat angle ++ "rad)"),
+                 MouseEvents.onClick (EdgeClick id),
+                 MouseEvents.onDoubleClick (EltDoubleClick id)
+                 -- Html.Events.on "mousemove" (D.succeed (EltHover id))
+            ] ++ (List.map Html.Attributes.class classes)
+   in
+   makeLatex {latexPreamble = ""} 
+        p (12,24) "⊢" z attrs
+-}
+
 normalEdgeDrawing : Config -> Graph.EdgeId 
 -- -> Geometry.PosDims -> Geometry.PosDims
      -> Activity 
      -> Int
      -> NormalEdgeDrawingLabel -> QuadraticBezier -> Float -> Drawing Msg
 normalEdgeDrawing cfg edgeId activity z {- from to -} label q curve =
-    -- let c = Color.merge (activityToColor activity) label.style.color in
-    let c = label.style.color in
-    let oldstyle = label.style in
-    let style = { oldstyle | color = c } in
-    let classes = List.map Drawing.class <| activityToEdgeClasses activity in
+    let style = ArrowStyle.getStyle label in
+    let classes =  
+         if label.isAdjunction then 
+            activityToClasses activity 
+         else
+            activityToEdgeClasses activity 
+    in
     -- let q = Geometry.segmentRectBent from to 
     --          label.style.bend
     -- in
-    Drawing.group [
-         Drawing.arrow 
-          (classes ++
+    let attrs = (List.map Drawing.class classes ++
             [Drawing.zindexAttr z, -- Drawing.color c,
            Drawing.onClick (EdgeClick edgeId),
            Drawing.onDoubleClick (EltDoubleClick edgeId),
@@ -291,6 +316,16 @@ normalEdgeDrawing cfg edgeId activity z {- from to -} label q curve =
            Drawing.simpleOn "mousemove" (MouseOn edgeId)
           ] 
           )
+    in
+    -- if label.isAdjunction then
+    --     adjunctionArrow edgeId classes z label q
+    --     -- makeLatex {latexPreamble = ""} 
+    --     --     pos dims label z attrs
+    --     -- Drawing.adjunctionArrow attrs style q
+    -- else
+        Drawing.group [
+         Drawing.arrow 
+          attrs
           style
          q, 
           segmentLabel cfg q edgeId activity label curve]

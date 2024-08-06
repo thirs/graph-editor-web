@@ -12,7 +12,7 @@ encodeNodeTikZ sizeGrid n =
     let (x, y) = GraphDefs.getNodePos n.label in
     let coord u = (u / 21) in -- 17.7667
     let label = (if n.label.label == "" then "\\bullet" else n.label.label ) in
-    "\\node ("
+    "\\node[inner sep=5pt] ("
         ++ String.fromInt n.id
         ++ ") at ("
         ++ String.fromFloat (coord x)
@@ -62,7 +62,7 @@ graphToTikz sizeGrid g =
     let tikzPullshouts =
             pullshouts |> List.map (encodePullshoutTikZ gnorm) |> String.concat
     in
-    "\\begin{tikzpicture}[every node/.style={inner sep=2pt,outer sep=0pt,anchor=base,text height=1.2ex, text depth=0.25ex},every edge/.style={draw,->,shorten <=3pt, shorten >=3pt}] \n"
+    "\\begin{tikzpicture}[every node/.style={outer sep=0pt,anchor=base,text height=1.2ex, text depth=0.25ex}] \n"
         ++ tikzNodes
         ++ tikzFakeEdges
         ++ tikzEdges
@@ -102,6 +102,11 @@ encodeEdgeTikZ e =
         ++ String.fromInt e.to
         ++ ") \n"
 
+{-
+encodeAdjunction : GraphDefs.NormalEdgeLabel -> String
+encodeAdjunction e = "edge[draw=none] node[midway, anchor=center, sloped]{$\\dashv$}"
+-}
+
 encodeLabel : Edge EdgeLabel -> String
 encodeLabel e =
     case e.label.details of
@@ -109,17 +114,18 @@ encodeLabel e =
             ""
 
         NormalEdge l ->
+            let style = ArrowStyle.getStyle l in
             let lbl = "${\\scriptstyle " ++ 
                     l.label 
                     ++ "}$"
             in
-            (case l.style.labelAlignment of
-                 Over -> "labelonat={" ++ lbl ++ "}{" ++ String.fromFloat l.style.labelPosition ++ "}, "
-                 Centre -> "labelonat={" ++ lbl ++ "}{" ++ String.fromFloat l.style.labelPosition ++ "}, "                 
+            (case style.labelAlignment of
+                 Over -> "labelonatsloped={" ++ lbl ++ "}{" ++ String.fromFloat style.labelPosition ++ "}, "
+                 Centre -> "labelonat={" ++ l.label ++ "}{" ++ String.fromFloat style.labelPosition ++ "}, "                 
                  Left -> "\"" ++ lbl ++ "\", "
                  Right -> "\"" ++ lbl ++ "\"', ")
-            ++ "pos=" ++ String.fromFloat l.style.labelPosition ++ ", "
-            ++ ArrowStyle.tikzStyle l.style
+            ++ "pos=" ++ String.fromFloat style.labelPosition ++ ", "
+            ++ ArrowStyle.tikzStyle style
 
 labelfromAlignment : LabelAlignment -> String
 labelfromAlignment a =

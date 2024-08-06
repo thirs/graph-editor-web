@@ -51,7 +51,6 @@ type Msg
   = -- call some js function
     Do (Cmd Msg)
   | Save
-  | FileName String -- new file name
   | ExportQuiver
     -- on reception of this message, the js function onMouseMove is called
     -- which sends back a MouseMove message with the relative position to 
@@ -76,16 +75,18 @@ type Msg
   | SetFirstTab GraphInfo  
   -- a graph is pasted
   | PasteGraph GraphInfo
-  | QuickInput Bool String -- flag: is it the final string?
+  | QuickInput String
   | SetFirstTabEquation String
   | NodeRendered NodeId Point
   | EdgeRendered EdgeId Point
   | MouseOn Graph.Id
   | Clear { scenario : Scenario, preamble : String}
   | SizeGrid Int
+  | RulerMargin Int
   | ToggleHideGrid
+  | ToggleHideRuler
   | ToggleAutosave
-  | SaveGridSize
+  | SaveRulerGridSize
   | OptimalGridSize
   | SwitchTab Int
   | NewTab

@@ -41,14 +41,15 @@ initialise m =
             pos = InputPosMouse,                                 
             chosen = GraphDefs.selectedGraph modelGraph,
             mode = mode,
-            inverted = False
+            inverted = False,
+            isAdjunction = False
             -- merge = False 
             }
         }  
             
 nextStep : Model -> {finish:Bool, merge:Bool} -> NewArrowState -> ( Model, Cmd Msg )
 nextStep model {finish, merge} state =
-     let info = moveNodeInfo merge model state in
+     let info = moveNodeInfo merge True model state in
      
      -- let m2 = addOrSetSel False info.movedNode { model | graph = info.graph } in
      let m2 = setSaveGraph model <| GraphDefs.weaklySelectMany info.selectable
@@ -103,11 +104,13 @@ update state msg model =
         KeyChanged False _ (Character '?') -> noCmd <| toggleHelpOverlay model
         KeyChanged False _ (Control "Escape") -> switch_Default model
         MouseClick -> next {finish = False, merge = False}
-        KeyChanged False _ (Control "Enter") -> next {finish = True, merge = False}
+        KeyChanged False _ (Control "Enter") -> next {finish = True, merge = state.isAdjunction}
     --     TabInput -> Just <| ValidateNext
-        KeyChanged False _ (Control "Tab") -> next {finish = False, merge = False}
-        KeyChanged False _ (Character 'i') -> noCmd <| updateState model { state | inverted =  not state.inverted}         
-        KeyChanged False _ (Character 'p') -> pullshoutMode Pullback
+        KeyChanged False _ (Control "Tab") -> next {finish = False, merge = state.isAdjunction}
+        KeyChanged False _ (Character 'a') -> next {finish = True, merge = True}
+        KeyChanged False _ (Character 'd') -> noCmd <| updateState model { state | isAdjunction = not state.isAdjunction}         
+        KeyChanged False _ (Character 'i') -> noCmd <| updateState model { state | inverted = not state.inverted}                 
+        KeyChanged False _ (Character 'p') -> pullshoutMode Pullback 
         KeyChanged False _ (Character 'P') -> pullshoutMode Pushout
         KeyChanged False _ (Character 'C') -> 
               let mode = nextPossibleMode state
@@ -146,6 +149,7 @@ nextPossibleMode s =
 
 moveNodeInfo :
     Bool
+    -> Bool
     -> Model
     -> NewArrowState
     ->
@@ -153,9 +157,14 @@ moveNodeInfo :
         , selectable : List Graph.Id
         , renamable : List Graph.Id
         }
-moveNodeInfo merge model state = 
+moveNodeInfo merge emptyLabel model state =
                 let modelGraph = getActiveGraph model in
-                let edgeLabel = GraphDefs.newEdgeLabel "" state.style in
+                let style = ArrowStyle.getStyle state in                       
+                let edgeLabel = GraphDefs.newEdgeLabelAdj 
+                              (if state.isAdjunction then "\\vdash" else 
+                                if emptyLabel then "" else "-") 
+                              style state.isAdjunction
+                in
                 let nodePos = GraphDefs.centerOfNodes (Graph.nodes state.chosen) in
                 let nodeLabel = GraphDefs.newNodeLabel nodePos "" True Zindex.defaultZ  in
                 let extendedGraph = 
@@ -175,7 +184,9 @@ moveNodeInfo merge model state =
                 let selectable = Graph.allIds extendedGraph.newSubGraph in
                 { graph = moveInfo.graph,
                 selectable = selectable,
-                renamable = (if moveInfo.merged then [] else selectable) ++ extendedGraph.edgeIds}
+                renamable = (if moveInfo.merged then [] else selectable) ++ 
+                            (if state.isAdjunction then [] else extendedGraph.edgeIds)
+                }
 
 
 
@@ -184,7 +195,7 @@ graphDrawing m s =
     -- let defaultView movedNode = modelGraph{ graph = modelGraph, movedNode = movedNode}  in
     -- graphMakeEditable (renamableFromState s) <|
     collageGraphFromGraph m <|
-            let info = moveNodeInfo False m s in
+            let info = moveNodeInfo s.isAdjunction False m s in
              info.graph 
          
 help : String
@@ -195,12 +206,13 @@ help =
             HtmlDefs.overlayHelpMsg ++
             ", [ESC] cancel, [click, TAB] name the point (if new) and arrow, "
             ++ "[hjkl] position the new point with the keyboard, "
-            ++ "[ctrl] merge, "
+            ++ "[ctrl] merge, [a] merge without renaming, "
              ++ "[RET] terminate the arrow creation, "
              ++ "[\""
              ++ ArrowStyle.controlChars
              ++ "\"] alternate between different arrow styles, "
              ++ "[i]nvert arrow, "
+             ++ "create a[d]junction arrow, "
              ++ "[p]ullback/[P]ushout mode, "
              ++ "[C] switch to cone/cylinder creation (if relevant).\n"
              ++ "[p]ullback/[P]ushout mode.\n"

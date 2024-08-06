@@ -1,5 +1,6 @@
 module GraphDefs exposing (EdgeLabel, NodeLabel,
    NormalEdgeLabel, EdgeType(..), GenericEdge, edgeToNodeLabel,
+   newEdgeLabelAdj,
    filterLabelNormal, filterEdgeNormal, isNormalId, isNormal, isPullshout,
    filterNormalEdges, coqProofTexCommand,
    newNodeLabel, newEdgeLabel, newPullshout, emptyEdge,
@@ -56,7 +57,11 @@ type EdgeType =
      PullshoutEdge
    | NormalEdge NormalEdgeLabel
 
-type alias NormalEdgeLabel = { label : String, style : ArrowStyle, dims : Maybe Point}
+type alias NormalEdgeLabel = 
+  { label : String, style : ArrowStyle, dims : Maybe Point
+  -- ArrowStyle.getStyle should be systematically applied to the style
+  -- (TODO: remove this restriction)
+  , isAdjunction : Bool}
 
 coqProofTexCommand = "coqproof"
 
@@ -195,7 +200,7 @@ toProofGraph =
                           pos = Bez.middle bezier,
                           from = bezier.from,
                           to = bezier.to,
-                          identity = details.style.double })
+                          identity = ArrowStyle.isDouble details.style })
 
 selectedIncompleteDiagram : Graph NodeLabel EdgeLabel -> Maybe Diagram
 selectedIncompleteDiagram g = 
@@ -293,8 +298,13 @@ newGenericLabel d = { details = d,
                       weaklySelected = False,
                       zindex = defaultZ}
 
+newEdgeLabelAdj : String -> ArrowStyle -> Bool -> EdgeLabel
+newEdgeLabelAdj s style isAdjunction = newGenericLabel 
+    <| NormalEdge { label = s, style = style, dims = Nothing, isAdjunction = isAdjunction }
+
+
 newEdgeLabel : String -> ArrowStyle -> EdgeLabel
-newEdgeLabel s style = newGenericLabel <| NormalEdge { label = s, style = style, dims = Nothing }
+newEdgeLabel s style = newEdgeLabelAdj s style False
 
 newPullshout : EdgeLabel
 newPullshout = newGenericLabel PullshoutEdge
@@ -450,7 +460,9 @@ snapToGrid sizeGrid g =
 
 getLabelLabel : Graph.Id -> Graph NodeLabel EdgeLabel -> Maybe String
 getLabelLabel id g = g |> Graph.get id (Just << .label) 
-          (.details >> filterNormalEdges >> Maybe.map .label)
+          (.details >> filterNormalEdges >> 
+            Maybe.andThen 
+               (\ l -> if l.isAdjunction then Nothing else Just l.label))
           |> Maybe.join
 
 addOrSetSel : Bool -> Graph.Id -> Graph NodeLabel EdgeLabel -> Graph NodeLabel EdgeLabel
