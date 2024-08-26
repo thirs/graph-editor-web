@@ -8,6 +8,6 @@ make-test:
 	elm make src/Main.elm --output=elm.js
 	yarn compile
 start:
-	yarn start -- -- 
+	python3 -m webbrowser -n -t "http://localhost:8000/index.html"
 elm:
 	elm make src/Main.elm --output=elm.js

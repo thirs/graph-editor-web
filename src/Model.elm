@@ -28,6 +28,8 @@ depthHistory = 20
 minSizeGrid = 2
 maxSizeGrid = 500
 
+minRulerMargin = 50
+maxRulerMargin = 2000
 
 
 type alias Model = {
@@ -40,12 +42,8 @@ type alias Model = {
     -- , -- if the mouse is over some node or edge
     --  mousePointOver : Obj
     , statusMsg : String
-    , -- unnamedFlag : Bool,
-      quickInput : String
     , mode : Mode
     , hideGrid : Bool
-    -- filename in the web version / full path in the electron version
-    , fileName : String
     , showOverlayHelp : Bool
     -- do we add a proof node when creating a square?
     , squareModeProof : Bool
@@ -62,6 +60,9 @@ type alias Model = {
     , latexPreamble : String
     , scenario : Scenario
     , defaultGridSize : Int
+    -- margin for the rule
+    , rulerMargin : Int
+    , rulerShow : Bool
     }
 
 
@@ -232,9 +233,12 @@ setSaveGraph m g =
 --       InputPosMouse p -> p
 --       InputPosKeyboard p -> Point.add source <| deltaKeyboardPos p)
 
+clearModel : Model -> Model
+clearModel m =
+   createModel m.defaultGridSize m.rulerMargin
 
-createModel : Int -> Model
-createModel sizeGrid =
+createModel : Int -> Int -> Model
+createModel sizeGrid rulerMargin =
     let g = Graph.empty in
     { tabs = [ { active = True, graph = g, sizeGrid = sizeGrid, title = "1" } ]
     , defaultGridSize = sizeGrid
@@ -242,20 +246,20 @@ createModel sizeGrid =
     , mode = DefaultMode
     , statusMsg = ""
     , mouseOnCanvas = False
-    , -- Debug.toString ([pointToAngle (0,1), pointToAngle (0.001,1),
+     -- Debug.toString ([pointToAngle (0,1), pointToAngle (0.001,1),
       --                    pointToAngle (1,0), pointToAngle(0,-1),
       --                        pointToAngle (-1, 0.01)]),
-      quickInput = ""
     , mousePos = ( 0, 0 )
     , specialKeys = { ctrl = False, alt = False, shift = False }
     , hideGrid = False
-    , fileName = "graph.json"
     -- , bottomText = ""
-    , autoSave = False
+    , autoSave = True
     , latexPreamble = "\\newcommand{\\" ++ coqProofTexCommand ++ "}[1]{\\checkmark}"
     , scenario = Standard
     , showOverlayHelp = False
-    , squareModeProof = False    
+    , squareModeProof = False
+    , rulerMargin = rulerMargin
+    , rulerShow = False
     --, hoverId = Nothing
     -- whether we should select the closest object 
     -- when moving the mouse

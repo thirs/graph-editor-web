@@ -3,7 +3,7 @@ module Drawing exposing (Drawing,
   line,
   Attribute, simpleOn, on, onClick, onDoubleClick, {- onMouseEnter, onMouseLeave, -} color,
   svg,
-  class, empty, grid, htmlAnchor,
+  class, empty, grid, ruler, htmlAnchor,
   zindexAttr, emptyForeign, toString, shadowClass
   )
 
@@ -14,6 +14,7 @@ import Geometry
 import Json.Decode as D
 import Html 
 import ArrowStyle exposing (ArrowStyle)
+import Drawing.ArrowStyle
 import Geometry.QuadraticBezier as Bez exposing (QuadraticBezier)
 -- import Geometry
 import Svg.Events
@@ -175,9 +176,12 @@ mkPath dashed attrs q =
 
 arrow : List (Attribute a) -> ArrowStyle -> QuadraticBezier -> Drawing a
 arrow attrs0 arrowStyle q =
+    if ArrowStyle.isNone arrowStyle then
+        empty
+    else
     let attrs = Color arrowStyle.color :: attrs0 in
     let zindex = attributesToZIndex attrs in
-    let imgs = ArrowStyle.makeHeadTailImgs q arrowStyle in    
+    let imgs = Drawing.ArrowStyle.makeHeadTailImgs q arrowStyle in    
     let mkgen d l = mkPath d (l ++ attrs) in
     let mkl = mkgen arrowStyle.dashed [] in
     let mkshadow = mkgen False [class shadowClass] in
@@ -231,6 +235,17 @@ rect z { topLeft, bottomRight } =
        ]
        [] 
        |> ofSvg z
+
+ruler : Int -> Drawing a
+ruler offset =
+-- draw a vertical line at given offset 
+  let f = String.fromInt in
+  let z = defaultZ in
+  Svg.line 
+  ([Svg.x1 <| f offset, Svg.x2 <| f offset, Svg.y1 "0", Svg.y2 "100%"]
+  ++ attrsToSvgAttrs Svg.stroke [Color Color.black])
+  []
+  |> ofSvg z
 
 
 grid : Int -> Drawing a
