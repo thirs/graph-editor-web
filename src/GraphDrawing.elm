@@ -17,6 +17,7 @@ import HtmlDefs
 import Html.Events.Extra.Mouse as MouseEvents
 import Zindex exposing (foregroundZ)
 import EdgeShape exposing (EdgeShape(..), Hat)
+import Json.Decode
 
 -- these are extended node and edge labels used for drawing (discarded for saving)
 type alias NormalEdgeDrawingLabel = 
@@ -129,12 +130,12 @@ make_input pos label onChange =
                        Html.Attributes.autofocus True,
                        Html.Attributes.style "width"
                            <| String.fromInt (String.length label + 1) ++ "ch"
-                    ] ++ 
-                    HtmlDefs.onRendered (always <| Do <| Msg.focusId HtmlDefs.idInput )
+                    ] ++ [class [HtmlDefs.renderedClass]] ++
+                    [HtmlDefs.onRendered (always <| Do <| Msg.focusId HtmlDefs.idInput )]
                     ++
-                    HtmlDefs.onRendered (always <| Do <| HtmlDefs.select HtmlDefs.idInput )
+                    [HtmlDefs.onRendered (always <| Do <| HtmlDefs.select HtmlDefs.idInput )]
                     ) []                                        
-             |> Drawing.htmlAnchor foregroundZ pos (100,16) True ""
+             |> Drawing.htmlAnchor Nothing foregroundZ pos (100,16) True ""
 
 
 activityToClasses : Activity -> List String
@@ -151,8 +152,8 @@ activityToEdgeClasses a =
      WeakActive -> ["weak-active-edge"]
      _ -> []
 
-nodeLabelDrawing : Config -> List (Drawing.Attribute Msg) -> Node NodeDrawingLabel -> Drawing Msg
-nodeLabelDrawing cfg attrs node =
+nodeDrawing : Config -> Node NodeDrawingLabel -> Drawing Msg
+nodeDrawing cfg node =
     let n = node.label in    
     let id = node.id in
     (
@@ -166,15 +167,25 @@ nodeLabelDrawing cfg attrs node =
                      ++ (if n.label == "" then "\\bullet" else
                      if n.isMath then n.label else "\\text{" ++ n.label ++ "}" )
             in
-            makeLatex cfg n.pos n.dims label n.zindex
+            -- makeLatex cfg n.pos id n.dims label n.zindex
+            Drawing.makeLatex 
+            {
+                zindex = n.zindex,
+                label = label,
+                preamble = cfg.latexPreamble,
+                pos = n.pos,
+                dims = n.dims,
+                angle = 0,
+                scale = 1
+            }
             ([   MouseEvents.onClick (NodeClick id),
                  MouseEvents.onDoubleClick (EltDoubleClick id)
                  -- Html.Events.on "mousemove" (D.succeed (EltHover id))
-            ] ++ 
-            (activityToClasses n.isActive |> List.map Html.Attributes.class)
-           -- ++ (if n.isMath then [] else  [Html.Attributes.class "text-node"])
+            ] 
+            ++ [HtmlDefs.renderedClass :: activityToClasses n.isActive |> class]
+
             ++
-            HtmlDefs.onRendered (Msg.NodeRendered id)
+            [HtmlDefs.onRendered (Msg.NodeRendered id)]
             )
                 
 
@@ -189,17 +200,6 @@ nodeLabelDrawing cfg attrs node =
              
         ) 
 
-nodeDrawing : Config -> Node NodeDrawingLabel -> Drawing Msg
-nodeDrawing cfg n =
-  {-  let watch = if n.label.watchEnterLeave then
-        [Drawing.onMouseEnter (NodeEnter n.id),
-         Drawing.onMouseLeave (NodeLeave n.id) ]
-         else []
-   in  -}
-    nodeLabelDrawing cfg
-    [Drawing.onClick (NodeClick n.id)]
-    
-    n
         
 
 
@@ -243,38 +243,53 @@ segmentLabel cfg q edgeId activity label curve =
          if  label.label == "" then
              Drawing.empty
          else 
-             let finalLabel = " \\scriptstyle " ++ label.label in
-             let rotateAttr = 
-                   if label.style.labelAlignment == Geometry.Over then
-                      let angle = Point.pointToAngle <| Point.subtract q.to q.from in
-                      [ Html.Attributes.style "transform"
-                      ("rotate(" ++ String.fromFloat angle ++ "rad)")]
-                   else
-                       []
+             let finalLabel = label.label in --  " \\scriptstyle " ++ label.label in
+             let angle =
+                  if label.style.labelAlignment == Geometry.Over then
+                   Point.pointToAngle <| Point.subtract q.to q.from 
+                  else 0
              in
-             makeLatex cfg labelpos label.dims finalLabel foregroundZ
+                          -- makeLatex cfg labelpos edgeId label.dims finalLabel foregroundZ
              
+             Drawing.makeLatex 
+             {
+                zindex = foregroundZ,
+                label = finalLabel,
+                preamble = cfg.latexPreamble,
+                pos = labelpos,
+                dims = label.dims,
+                angle = angle,
+                scale = GraphDefs.edgeScaleFactor
+             }  -- -}          
              ([   MouseEvents.onClick (EdgeClick edgeId),
                   MouseEvents.onDoubleClick (EltDoubleClick edgeId),
                   MouseEvents.onMove  (always (MouseOn edgeId))
                  -- Html.Events.onMouseOver (EltHover edgeId)
-             ] ++ rotateAttr ++  
-             (activityToClasses activity |> List.map Html.Attributes.class)        
+             ] ++
+             [HtmlDefs.renderedClass :: activityToClasses activity |> class]
               ++
-              HtmlDefs.onRendered (Msg.EdgeRendered edgeId)
+              [HtmlDefs.onRendered (Msg.EdgeRendered edgeId)]
              )
             
             {- Drawing.fromString [Drawing.onClick (EdgeClick edgeId)]
               labelpos label.label  -}
-makeLatex cfg pos dims label z attrs  =
-  Drawing.htmlAnchor z pos dims True
-            (makeLatexString label)
-            <| HtmlDefs.makeLatex
-              attrs
-              (withPreamble cfg label)
 
-makeLatexString s = "\\(" ++ s ++ "\\)"
-withPreamble cfg s = cfg.latexPreamble ++ "\n" ++ s
+
+{-
+adjunctionArrow : Graph.EdgeId -> List String -> Int -> NormalEdgeDrawingLabel -> QuadraticBezier -> Drawing Msg
+adjunctionArrow id classes z label q =
+   let p = Bez.middle q in 
+   let angle = Point.pointToAngle <| Point.subtract q.to q.from in
+   let attrs = [ Html.Attributes.style "transform"
+                   ("rotate(" ++ String.fromFloat angle ++ "rad)"),
+                 MouseEvents.onClick (EdgeClick id),
+                 MouseEvents.onDoubleClick (EltDoubleClick id)
+                 -- Html.Events.on "mousemove" (D.succeed (EltHover id))
+            ] ++ (List.map Html.Attributes.class classes)
+   in
+   makeLatex {latexPreamble = ""} 
+        p (12,24) "⊢" z attrs
+-}
 
 {-
 adjunctionArrow : Graph.EdgeId -> List String -> Int -> NormalEdgeDrawingLabel -> QuadraticBezier -> Drawing Msg
@@ -308,12 +323,12 @@ normalEdgeDrawing cfg edgeId activity z {- from to -} label q curve =
     -- let q = Geometry.segmentRectBent from to 
     --          label.style.bend
     -- in
-    let attrs = (List.map Drawing.class classes ++
-            [Drawing.zindexAttr z, -- Drawing.color c,
-           Drawing.onClick (EdgeClick edgeId),
-           Drawing.onDoubleClick (EltDoubleClick edgeId),
+    let attrs = (class classes ::
+            [
+          onClick (EdgeClick edgeId),
+          onDoubleClick (EltDoubleClick edgeId),
           -- Drawing.onHover (EltHover edgeId),
-           Drawing.simpleOn "mousemove" (MouseOn edgeId)
+           simpleOn "mousemove" (MouseOn edgeId)
           ] 
           )
     in
@@ -324,10 +339,8 @@ normalEdgeDrawing cfg edgeId activity z {- from to -} label q curve =
     --     -- Drawing.adjunctionArrow attrs style q
     -- else
         Drawing.group [
-         Drawing.arrow 
-          attrs
-          style
-         q, 
+         Drawing.arrow {zindex = z, style = style, bezier = q}
+          attrs,
           segmentLabel cfg q edgeId activity label curve]
 
 {- type alias DrawingDims msg =
@@ -342,22 +355,37 @@ type alias Extrem =
    fromPos : Point,
    toPos : Point}
 
+
+onClick : (MouseEvents.Event -> a) -> Html.Attribute a --  String.Html.Attribute a
+onClick = MouseEvents.onClick -- >> ghostAttribute
+
+simpleOn : String -> a -> Html.Attribute a
+simpleOn event = Json.Decode.succeed >> Html.Events.on event -- >> ghostAttribute
+
+
+onDoubleClick : (MouseEvents.Event -> a) -> Html.Attribute a
+onDoubleClick = MouseEvents.onDoubleClick -- >> ghostAttribute
+
+-- Html.Attributes.class doesn't work
+-- as it creates a property, not an attribute
+-- and svg does not support the class attribute
+class : List String -> Html.Attribute a
+class = Html.Attributes.attribute "class" << String.join " "
+
+
+
+
 drawHat : Graph.EdgeId -> Activity -> Int -> Hat -> Drawing Msg
 drawHat edgeId a z hat =
-    let blackline classes = Drawing.line 
-               (classes ++ 
-               [ Drawing.zindexAttr z,
-                 Drawing.onClick (EdgeClick edgeId),
-                 Drawing.color Color.black
-                 ])
-     in
-     let mk_pbk classes = 
-           Drawing.group 
-           [blackline classes hat.p1 hat.summit, blackline classes hat.summit hat.p2] 
-     in
-     let classes = List.map Drawing.class <| activityToEdgeClasses a in
-     Drawing.group 
-     [mk_pbk (Drawing.class Drawing.shadowClass :: classes), mk_pbk classes] 
+    let classes = class <| activityToEdgeClasses a in
+    Drawing.polyLine 
+                {zindex = z, color = Color.black
+                , points = [hat.p1, hat.summit, hat.p2] }
+               [classes, onClick (EdgeClick edgeId) 
+                 ]
+
+    --  Drawing.group 
+    --  [mk_pbk [class <| (Drawing.shadowClass :: classes)], mk_pbk [class classes]] 
 
 {-
 

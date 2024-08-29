@@ -3,16 +3,20 @@ module String.Svg  exposing (..)
 import String.Html exposing (Html, attribute, attributeNS)
 import Geometry
 import Geometry exposing (PosDims)
+import Drawing.Color as Color
 
 type alias Svg a = Html a
 type alias Attribute a = String.Html.Attribute a
 node = String.Html.nodeNS "http://www.w3.org/2000/svg"
+keyedNode = String.Html.keyedNodeNS "http://www.w3.org/2000/svg"
 
 svg = node "svg"
+ksvg = keyedNode "svg"
 
 text = String.Html.text
 foreignObject = node "foreignObject"
 g = node "g"
+kg = keyedNode "g"
 image = node "image"
 circle = node "circle"
 line = node "line"
@@ -40,6 +44,7 @@ style = attribute "style"
 defs = node "defs"
 fill = attribute "fill"
 stroke = attribute "stroke"
+strokeFromColor = stroke << Color.toString
 
 strokeDasharray = attribute "stroke-dasharray"
 strokeLinecap = attribute "stroke-linecap"
@@ -63,6 +68,8 @@ width = attribute "width"
 height = attribute "height"
 patternUnits = attribute "patternUnits"
 strokeWidth = attribute "stroke-width"
+strokeWidthPx w = attribute "stroke-width" 
+                  <| String.fromInt w ++ "px"
 transform = attribute "transform"
 
 xlinkHref = attributeNS "http://www.w3.org/1999/xlink" "xlink:href"
