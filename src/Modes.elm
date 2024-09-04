@@ -7,6 +7,7 @@ import InputPosition exposing (InputPosition)
 import GraphDefs exposing (NodeLabel, EdgeLabel)
 import Format.GraphInfo as GraphInfo exposing (TabId)
 import Msg exposing (ModifId, MoveMode)
+import Drawing.Color as Color
 
 
 
@@ -113,6 +114,7 @@ type alias PullshoutState =
     { chosenEdge : EdgeId
     -- , source : Graph.Id
     -- , target : Graph.Id
+    , color : Color.Color
     , kind : PullshoutKind
     , currentDest : EdgeId
     , possibilities : List EdgeId
@@ -127,7 +129,8 @@ type ArrowMode =
 
 
 type alias NewLineState = {
-    initialPos : Point
+    initialPos : Point,
+    bend : Float
     }
 
 type alias NewArrowState =
