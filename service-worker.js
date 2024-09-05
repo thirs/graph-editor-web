@@ -1,10 +1,10 @@
-// Version: 3
+// Version: 4
 const CACHE_NAME = 'my-cache-v2';
 const urlsToCache = [
-  './',
-  './grapheditor.html',
-  './elm.js',
-  './watcher.js',
+  '../',
+  './index.html',
+  './js/elm.js',
+  './js/bundle.js',
   './js/katex-custom-element.js',
   './js/katex.min.css.js',
 ];

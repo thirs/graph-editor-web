@@ -8,9 +8,8 @@
             const renderedClass = "rendered-callback";
             const renderedEvent = "rendered";
         </script>
-        <script src="elm.js"></script>
-        <!-- This script is used for the open directory feature  -->
-        <script src="watcher.js"></script>
+        <script src="js/elm.js"></script>
+        <script src="js/bundle.js"></script>
         
         <!-- The loading of KaTeX is deferred to speed up page rendering -->
         <script src="js/katex.min.css.js"></script>
@@ -118,7 +117,7 @@ if ('serviceWorker' in navigator) {
       });
   });
 }
-        
+        const defaultServer = "ws://localhost:8080";
             // LocalStorage key used for quicksave
             const storageKey = "yadegraph";
             const gridStorageKey = "yadegridsize"
@@ -133,6 +132,9 @@ if ('serviceWorker' in navigator) {
                 var ret = window.prompt(question, defaut);
                 if (ret !== null)                   
                    callback(ret);
+            }
+            var customAlert = function(message) {
+                window.alert(message);
             }
 
             var gridSize = 200;
@@ -166,6 +168,7 @@ if ('serviceWorker' in navigator) {
         <h1>Diagram editor</h1>
         <button id="install" hidden>Install for offline use</button>
         <button id="connect" onclick="tryConnect()">Connect to server</button>
+        <span id="connect-status"></span>
    
      
         <!-- <p>
@@ -430,7 +433,7 @@ function disableInAppInstallPrompt() {
 
         function processWatchedFile(config,preamble,dirHandle) {
             function doit() {
-              return checkWatchedFile(config,dirHandle)
+              return Bundle.checkWatchedFile(config,dirHandle)
                 .then(function (r) {
                     if (r === undefined) {
                         return;
@@ -451,7 +454,7 @@ function disableInAppInstallPrompt() {
                         }
                         saveGraphFun = function (d) {};
                         quicksaveFun = function (d) {};
-                        watchSaveDiagram(config, r, dirHandle, fromElmGraph(d.info), d.export)
+                        Bundle.watchSaveDiagram(config, r, dirHandle, fromElmGraph(d.info), d.export)
                         .then(() => { 
                              doit();
                     });
@@ -490,31 +493,31 @@ function disableInAppInstallPrompt() {
         app.ports.openDirectory.subscribe(
             function() {
                 if (!isFileAPI) {
-                    alert("Your browser does not support the File System Access API");
+                    customAlert("Your browser does not support the File System Access API");
                     return;
                 }
 
             showDirectoryPicker().then(function (dirHandle) { 
                 dirHandle.getFileHandle(configFilename)
                 .then((f) => f.getFile(),(e) => { 
-                      alert("Cannot access " + configFilename + ": " + e.toString());
+                      customAlert("Cannot access " + configFilename + ": " + e.toString());
                      throw (e); })
                .then((file) => file.text())
                .then((text) => {
                 var json = JSON.parse(text);
                 if (!json.watchedFile) {
-                    alert("watchedFile unspecified in the json");
+                    customAlert("watchedFile unspecified in the json");
                     return;
                 }
                 var extension = extractExtensionFromPath(json.watchedFile);
                 
                 var data = [];
-                if (extension in defaultsExt)
-                    data.push(defaultsExt[extension]);
+                if (extension in Bundle.defaultsExt)
+                    data.push(Bundle.defaultsExt[extension]);
                 else
-                    console.log("Unknown e  xtension " + extension + ".");
+                    console.log("Unknown extension " + extension + ".");
                 data.push(json);
-                var config = defaultConfig;
+                var config = Bundle.defaultConfig;
                 for (conf of data) {
                     config = Object.assign(config, conf);
                 }
@@ -527,7 +530,7 @@ function disableInAppInstallPrompt() {
                 });
                });
             })
-            .catch((e) => { console.log(e); alert("Cannot access the directory"); });
+            .catch((e) => { console.log(e); customAlert("Cannot access the directory"); });
             
              
             }
@@ -535,7 +538,7 @@ function disableInAppInstallPrompt() {
         // load a json graph file, from local storage
         function quickloadGraph() {
             if (!supportStorage) {           
-               alert("Sorry, your browser does not support Web Storage.");
+               customAlert("Sorry, your browser does not support Web Storage.");
                return;
             }    
             // we first try loading from the current
@@ -549,7 +552,7 @@ function disableInAppInstallPrompt() {
                     sessionStorage.setItem(storageKey, result);                    
             }
             if (!result) {
-                alert('No quicksaved graph found');
+                customAlert('No quicksaved graph found');
                 return;
             }
             sendGraphTxtToElm(result);
@@ -560,7 +563,7 @@ function disableInAppInstallPrompt() {
          app.ports.quickLoad.subscribe(quickloadGraph);
 
          app.ports.alert.subscribe(function(s) {
-             alert(s);
+             customAlert(s);
          });
 
 
@@ -603,7 +606,7 @@ function disableInAppInstallPrompt() {
              // Check browser support
             if (!supportStorage) {           
                if (feedback)
-                   alert("Sorry, your browser does not support Web Storage.");
+                   customAlert("Sorry, your browser does not support Web Storage.");
                return;
             }
             // Store even if the browser is closed
@@ -612,7 +615,7 @@ function disableInAppInstallPrompt() {
             // in case multiple tabs are opened
             sessionStorage.setItem(storageKey, JSON.stringify(d));
             if (feedback)
-                alert("Successful quicksave"); 
+                customAlert("Successful quicksave"); 
          }
          var quicksaveFun = function(a) {
             defaultQuickSave(a, !a.autosave);
@@ -645,7 +648,7 @@ function disableInAppInstallPrompt() {
                 saveFileApi(arg)
                 .then(() => {
                     if (feedback) {
-                        alert("Successful quicksave to " + currentFileHandle.name);
+                        customAlert("Successful quicksave to " + currentFileHandle.name);
                     }
                 });
             };
@@ -655,7 +658,7 @@ function disableInAppInstallPrompt() {
             console.log("Saving grid size preferences.");
             // Check browser support
             if (!supportStorage) {           
-               alert("Sorry, your browser does not support Web Storage.");
+               customAlert("Sorry, your browser does not support Web Storage.");
                return;
             }
             // Store even if the browser is closed
@@ -783,18 +786,19 @@ function disableInAppInstallPrompt() {
          function toClipboard({content, success, failure}) {
             navigator.clipboard.writeText(content).then(
             () => {
-                success && alert(success);
+                success && customAlert(success);
             },
             () => {
-                failure && alert(failure);
+                failure && customAlert(failure);
             });
          };
 
          app.ports.toClipboard.subscribe(toClipboard);
-         const err = "This features is only enabled with the webview version embedded in the appropriate vscode extension";
+         const err = "This feature is only enabled with the webview version embedded in the appropriate vscode extension";
 
        
          if (vscode) {
+            
             app.ports.applyProof.subscribe(function(data){ 
                 sendExternalMsg("apply-proof", data)
                 });
@@ -811,14 +815,21 @@ function disableInAppInstallPrompt() {
             });
          }
          else {
-            // app.ports.incompleteEquation.subscribe((data) =>  alert(err));
-            app.ports.applyProof.subscribe((data) =>  alert(err));
-            app.ports.requestProof.subscribe((data) =>  alert(err));
+            // 0.7em c'est bien
+            //utiliser \relscale{0.7} pour changer la taille de la police
+            // bah non ca ne marche pas..
+            // app.ports.incompleteEquation.subscribe((data) =>  customAlert(err));
+            app.ports.applyProof.subscribe((data) =>  customAlert(err));
+            app.ports.requestProof.subscribe((data) => {
+                navigator.clipboard.writeText(data.statement)
+                .then(() => customAlert("Statement copied to clipboard"));
+            }
+            );
          }
 
          function copyErr(s, emptyErr, success, failure) {
             if (s == "") {
-                alert("No selected subdiagram found!");
+                customAlert("No selected subdiagram found!");
                 return;
             }
             toClipboard(
@@ -898,32 +909,31 @@ function disableInAppInstallPrompt() {
             console.log("connecting to " + rep);
             ws = new WebSocket(rep);
             ws.onclose = function(event) {
+                online = false;
+                document.getElementById("connect-status").textContent = "";
                 if (event.wasClean) {
-                    alert(`[close] Connection closed cleanly, code=${event.code} reason=${event.reason}`);
+                    customAlert(`[close] Connection closed cleanly, code=${event.code} reason=${event.reason}`);
                 } else {
                     // par exemple : processus serveur arrêté ou réseau en panne
                     // event.code est généralement 1006 dans ce cas
-                    alert('[close] Connection died');
-                }
-                online = false;
+                    customAlert('[close] Connection died');
+                }                
             };
             // La connexion est ouverte
             ws.addEventListener("open", function (event) {
             // socket.send("Coucou le serveur !");
                 online = true;
-                // je ne comrpends pas pourquoi il faut faire ca.
-                // (normalement, la declaration de expectedIfFromServer dans
-                // watcher.js devrait suffire)
-                expectedIdFromServer = 0;
-                alert("connected");
-                requestSnapshot(ws);
+                document.getElementById("connect-status").textContent = "(connected)";
+                Bundle.expectedIdFromServer = 0;
+                customAlert("YADE is connected to server");
+                Bundle.requestSnapshot(ws);
                 
             });
 
             // Écouter les messages
             ws.addEventListener("message", function (event) {
                 // console.log("Voici un message du serveur", event.data);
-                handleServerToClientMsg(ws,
+                Bundle.handleServerToClientMsg(ws,
                       app.ports.protocolRequestSnapshot.send
                     , (s) => {
                         console.log("websocket received: ");
@@ -932,16 +942,16 @@ function disableInAppInstallPrompt() {
                     }
                     , event.data) ;
             });
-            // alert("go");
+            // customAlert("go");
          };
         //  const connectButton = document.querySelector("#connect");
          function tryConnect() {
-            customPrompt("connect to what?","ws://localhost:8080",
+            customPrompt("connect to what?",defaultServer,
                 function (rep) {
                     if (rep === null) {
                         return;
                     }
-                    // alert("c'est parti");
+                    // customAlert("c'est parti");
                     connectToServer(rep);
                 });
            
@@ -955,7 +965,7 @@ function disableInAppInstallPrompt() {
                 app.ports.protocolReceiveJS.send([{isSender : true, msg:arg.msg}]);
                 return;
             }
-            broadcastDataOnSocket(ws, arg);
+            Bundle.broadcastDataOnSocket(ws, arg);
          });
 
 
@@ -973,9 +983,13 @@ function disableInAppInstallPrompt() {
                 promptCallback = (ret) => callback(ret);
                 vscode.postMessage({key:"prompt", content: {question: question, default: defaut}});
             };
+            customAlert = function (message) {
+                vscode.postMessage({key:"alert", content: message});
+            };
             app.ports.generateProofJs.subscribe(function(script){
                 sendExternalMsg("generate-proof",processProof(script));
             });
+            connectToServer(defaultServer);
        }
 
          // copied from index.ts
@@ -1036,7 +1050,10 @@ function loadDataFromVscode(data, filename, scenario,  setFirstTab = false) {
             app.ports.appliedProof.send(msg.content);
             // mainWindow.webContents.send(msg.key, msg.content);
             break;
-             
+          case "mayConnect":
+            if (!online)
+                connectToServer(msg.content);
+            break;
        }
       }
   );

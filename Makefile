@@ -1,13 +1,21 @@
-all:
-	elm make src/Main.elm --output=elm.js
-	yarn compile
-	yarn make
-install:
-	dpkg -i out/make/deb/x64/coreact-yade_*_amd64.deb
-make-test:
-	elm make src/Main.elm --output=elm.js
-	yarn compile
-start:
-	python3 -m webbrowser -n -t "http://localhost:8000/index.html"
+
+.PHONY: server all elm js site vscode http
+
+all: js elm
+
 elm:
-	elm make src/Main.elm --output=elm.js
+	elm make src/Main.elm --output=js/elm.js
+
+js:
+	npx esbuild --outfile=js/bundle.js ts/bundle.ts --bundle --global-name=Bundle --format=iife
+
+# run http server
+http:
+	npx esbuild --servedir=.
+
+server: server.js
+	node server.js
+
+server.js: ts/interface.d.ts server.ts
+	npx tsc $^
+
