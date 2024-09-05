@@ -16,6 +16,6 @@ http:
 server: server.js
 	node server.js
 
-server.js: ts/interface.d.ts server.ts
-	npx tsc $^
+server.js: ts/interface.d.ts ts/server.ts
+	npx tsc --outDir . $^
 
