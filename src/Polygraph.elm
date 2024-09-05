@@ -319,20 +319,6 @@ mapRepCodec c1 c2 =
        (mapGraphRep (always (Codec.encoder c1)) (always (Codec.encoder c2)))
        (mapGraphRep (always (Codec.decoder c1)) (always (Codec.decoder c2)))
 
-codec : Codec (Graph n e) { nodes : List (Node n), edges : List (Edge e) }
-codec =
-  Codec.build 
-  (\g -> 
-     { nodes = nodes g, edges = edges g }
-  )
-  (\ r -> fromNodesAndEdges r.nodes r.edges)
-
-mapCodec : Codec n1 n2 -> Codec e1 e2 -> Codec (Graph n1 e1) (Graph n2 e2) 
-mapCodec c1 c2 = 
-     Codec.build
-       (map (always (Codec.encoder c1)) (always (Codec.encoder c2)))
-       (map (always (Codec.decoder c1)) (always (Codec.decoder c2)))
-
 filterNodes : Graph n e -> (n -> Bool) -> List (Node n)
 filterNodes g f = nodes g |> List.filter (f << .label)
 
