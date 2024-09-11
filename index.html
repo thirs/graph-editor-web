@@ -166,6 +166,7 @@ if ('serviceWorker' in navigator) {
 
     <body>       
         <h1>Diagram editor</h1>
+        File: <span id="filename">(no file)</span>
         <button id="install" hidden>Install for offline use</button>
         <button id="connect" onclick="tryConnect()">Connect to server</button>
         <span id="connect-status"></span>
@@ -225,10 +226,11 @@ function disableInAppInstallPrompt() {
         const isFileAPI = typeof showDirectoryPicker != 'undefined';
         const configFilename = "yade-config.json";
         var vscode = undefined;
-        var currentFileHandle = undefined;
         if (typeof acquireVsCodeApi != 'undefined') {
             vscode = acquireVsCodeApi();
         }
+        var currentFileHandle = undefined;
+
 
         // copied from index.ts
         function sendExternalMsg(key, content) {
@@ -308,13 +310,22 @@ function disableInAppInstallPrompt() {
 
          var app = Elm.Main.init({
              node: appDiv,
-             flags: { defaultGridSize : gridSize, rulerMargin : rulerMargin }
+             flags: { defaultGridSize : gridSize, rulerMargin : rulerMargin
+                , saveLoadButtons : vscode == undefined
+              }
          });
 
 
         function setFileName(newName) {
             document.title = newName;
-        }      
+            document.getElementById("filename").textContent = newName;
+        }
+        function getFileName(newName) {
+            return document.getElementById("filename").textContent;
+        }
+        function resetFileName() {
+            setFileName("(no file)");
+        }
 
          // we send a signal [keyInput] to elm and recieve
          // the answer on [keyOutput]
@@ -523,7 +534,7 @@ function disableInAppInstallPrompt() {
                 }
                 var promise = new Promise((resolve) => resolve("") );
                 if (config.preambleFile)
-                    promise = getTextFromFilepath(dirHandle,config.preambleFile);
+                    promise = Bundle.getTextFromFilepath(dirHandle,config.preambleFile);
                 promise.then(function(preamble) {
                     app.ports.clear.send({scenario:"watch", preamble:preamble});
                     processWatchedFile(config,preamble, dirHandle);
@@ -923,9 +934,17 @@ function disableInAppInstallPrompt() {
             ws.addEventListener("open", function (event) {
             // socket.send("Coucou le serveur !");
                 online = true;
+                
+                
                 document.getElementById("connect-status").textContent = "(connected)";
-                Bundle.expectedIdFromServer = 0;
-                customAlert("YADE is connected to server");
+                Bundle.resetExpectedId();
+                let msg = "YADE is connected to server";
+                if (currentFileHandle) {
+                    msg += " (closing " + getFileName() + ")";
+                }
+                customAlert(msg);
+                resetFileName();
+                currentFileHandle = undefined;
                 Bundle.requestSnapshot(ws);
                 
             });

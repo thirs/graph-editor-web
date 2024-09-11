@@ -35,7 +35,7 @@ export const defaultConfig = {magic: "% YADE DIAGRAM",
   };
 
   //
-export let defaultsExt:any = 
+export const defaultsExt:any = 
 {"tex":
    { prefix: "% GENERATED LATEX",
      suffix: "% END OF GENERATED LATEX",
@@ -118,7 +118,7 @@ async function checkFileExistsFromPath(d:FileSystemDirectoryHandle, filePath:str
     }
 }
 
-async function getTextFromFilepath(d:FileSystemDirectoryHandle, filePath : string):Promise<string>{
+export async function getTextFromFilepath(d:FileSystemDirectoryHandle, filePath : string):Promise<string>{
     let filehandle = await getFilehandleFromPath(d,filePath);
     let file = await filehandle.getFile();
     return file.text();
