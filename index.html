@@ -109,13 +109,6 @@
 // This is for caching the files for offline use in the PWA version
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.getRegistration("./js/service-worker.js").then(registration => {
-      if (registration) {
-        registration.unregister().then(() => {
-          window.location.reload();
-        });
-      }
-    });
     navigator.serviceWorker.register('./service-worker.js')
       .then(registration => {
         console.log('ServiceWorker registration successful with scope: ', registration.scope);
@@ -935,8 +928,11 @@ function disableInAppInstallPrompt() {
          function connectToServer(rep) {
             console.log("connecting to " + rep);
             ws = new WebSocket(rep);
+            var intervalId = null;
             ws.onclose = function(event) {
                 online = false;
+                if (intervalId !== null)
+                    clearInterval(intervalId);
                 document.getElementById("connect-status").textContent = "";
                 if (event.wasClean) {
                     customAlert(`[close] Connection closed cleanly, code=${event.code} reason=${event.reason}`);
@@ -954,15 +950,22 @@ function disableInAppInstallPrompt() {
                 
                 document.getElementById("connect-status").textContent = "(connected)";
                 Bundle.resetExpectedId();
-                let msg = "YADE is connected to server";
+                let msg = "YADE is connected to server.";
                 if (currentFileHandle) {
-                    msg += " (closing " + getFileName() + ")";
+                    if (!confirm(msg + 
+                        " Keep editing " + getFileName() + "?")) {
+                        currentFileHandle = undefined;
+                        resetFileName();
+                    }
                 }
-                customAlert(msg);
-                resetFileName();
-                currentFileHandle = undefined;
-                Bundle.requestSnapshot(ws);
+                else {
+                    customAlert(msg);
+                }                
                 
+                Bundle.requestSnapshot(ws);
+                // Every 30s we send a ping to the server
+                // so that it knows what is our last seen id
+                intervalId = setInterval(() => Bundle.requestSnapshot(ws), 30000);
             });
 
             // Écouter les messages
