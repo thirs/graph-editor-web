@@ -6,8 +6,8 @@ import Html
 import Html.Attributes
 import Html.Events
 import Drawing exposing (Drawing)
-import Drawing.Color as Color
-import ArrowStyle exposing (ArrowStyle)
+import Drawing.Color as Color exposing (Color)
+import ArrowStyle exposing (ArrowStyle, MarkerStyle(..))
 import Geometry.Point as Point exposing (Point)
 import Msg exposing (Msg(..))
 import GraphDefs exposing (NodeLabel, EdgeLabel, NormalEdgeLabel)
@@ -95,7 +95,7 @@ make_edgeDrawingLabel : {editable : Bool, isActive : Activity, shape : EdgeShape
 make_edgeDrawingLabel {editable, isActive, shape} e =
    { isActive = isActive, zindex = e.zindex, shape = shape,
      details = case e.details of 
-        GraphDefs.PullshoutEdge x -> PullshoutEdge x
+        GraphDefs.PullshoutEdge x -> PullshoutEdge { color = x.color}
         GraphDefs.NormalEdge ({label, style, isAdjunction} as l) ->
            NormalEdge { label = label, editable = editable, 
               isAdjunction = isAdjunction,
@@ -202,9 +202,15 @@ nodeDrawing cfg node =
         
 
 
-segmentLabel : Config -> QuadraticBezier -> Graph.EdgeId -> Activity -> NormalEdgeDrawingLabel -> Float -> Drawing Msg
-segmentLabel cfg q edgeId activity label curve =
-    let offset = 10 + (if ArrowStyle.isDouble label.style then ArrowStyle.doubleSize else 0) in
+segmentLabel : Config -> QuadraticBezier -> Graph.EdgeId -> Activity -> NormalEdgeDrawingLabel -> MarkerStyle -> Float -> Drawing Msg
+segmentLabel cfg q edgeId activity label marker curve =
+    let offset = 
+          if ArrowStyle.isDouble label.style then 2 * ArrowStyle.doubleSize else
+          if ArrowStyle.isMarker marker then 5 else
+          0
+    in
+      
+    let edge_width = 2 + offset in
     let labelpos =              
               -- Quiver algorithm, following redraw_label
               -- https://github.com/varkor/quiver/blob/2c62d40b820cadc3c7f9d0816a33121f389b6240/src/arrow.js#L1219
@@ -214,7 +220,7 @@ segmentLabel cfg q edgeId activity label curve =
                Geometry.determine_label_position
                  length
                  angle
-                 2 -- edge_width
+                 edge_width -- edge_width
                  0 -- start
                  1 -- end
                  (curve * length)
@@ -328,12 +334,38 @@ normalEdgeDrawing cfg edgeId activity z {- from to -} label q curve =
         Drawing.group [
          Drawing.arrow {zindex = z, style = style, bezier = q}
           attrs,
-          segmentLabel cfg q edgeId activity label curve]
+          segmentLabel cfg q edgeId activity label style.marker curve,
+          drawMarker style.color style.marker q]
 
 {- type alias DrawingDims msg =
     { drawing : Drawing msg
     , posDims : Geometry.PosDims    
     } -}
+drawMarker : Color -> MarkerStyle -> QuadraticBezier -> Drawing Msg
+drawMarker color marker q =
+  case marker of
+    NoMarker -> Drawing.empty
+    BulletMarker -> drawStringMarker color "\\bullet" q
+    BarMarker -> drawStringMarker color "|" q
+
+drawStringMarker : Color -> String -> QuadraticBezier -> Drawing Msg
+drawStringMarker color marker q =
+    let pos = Bez.middle q in
+    let angle = Point.pointToAngle <| Point.subtract q.to q.from in
+             
+             Drawing.makeLatex 
+             {
+                zindex = foregroundZ,
+                label = marker,
+                preamble = "\\color{" ++ Color.toString color ++ "}",
+                pos = pos,
+                dims = (12,18),
+                angle = angle,
+                scale = GraphDefs.edgeScaleFactor,
+                key = Nothing
+             } 
+             []   
+
 
 type alias Extrem =
  { bez : QuadraticBezier,

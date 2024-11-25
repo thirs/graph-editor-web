@@ -72,7 +72,7 @@ import Modes.Move
 import Modes.Rename
 import Modes.Color
 import Drawing.Color as Color
-import Modes exposing (Mode(..), MoveDirection(..), isResizeMode, ResizeState, EnlargeState)
+import Modes exposing (Mode(..), SelectState, MoveDirection(..), isResizeMode, ResizeState, EnlargeState)
 
 import ArrowStyle
 
@@ -100,6 +100,7 @@ import Format.Version11
 import Format.Version12
 import Format.Version13
 import Format.Version14
+import Format.Version15
 import Format.LastVersion as LastFormat
 
 import Format.GraphInfo as GraphInfo exposing (Tab)
@@ -118,6 +119,7 @@ import Format.GraphInfo exposing (activeGraphModif)
 import Command
 import Platform.Sub as Sub
 import Msg exposing (defaultModifId)
+import GraphDefs exposing (isPullshout)
 
 
 port test : Maybe () -> Cmd a
@@ -164,6 +166,7 @@ port loadedGraph11 : (LoadGraphInfo Format.Version11.Graph -> a) -> Sub a
 port loadedGraph12 : (LoadGraphInfo Format.Version12.Graph -> a) -> Sub a
 port loadedGraph13 : (LoadGraphInfo Format.Version13.Graph -> a) -> Sub a
 port loadedGraph14 : (LoadGraphInfo Format.Version14.Graph -> a) -> Sub a
+port loadedGraph15 : (LoadGraphInfo Format.Version15.Graph -> a) -> Sub a
 
 
 -- port setFirstTabGrph : ()
@@ -259,6 +262,7 @@ subscriptions m =
       loadedGraph12 (mapLoadGraphInfo Format.Version12.fromJSGraph >> loadGraphInfoToMsg),
       loadedGraph13 (mapLoadGraphInfo Format.Version13.fromJSGraph >> loadGraphInfoToMsg),
       loadedGraph14 (mapLoadGraphInfo Format.Version14.fromJSGraph >> loadGraphInfoToMsg),
+      loadedGraph15 (mapLoadGraphInfo Format.Version15.fromJSGraph >> loadGraphInfoToMsg),
       setFirstTabEquation SetFirstTabEquation,
       -- decodedGraph (LastFormat.fromJSGraph >> PasteGraph),
       E.onClick (D.succeed MouseClick),
@@ -591,7 +595,7 @@ update msg modeli =
         MakeSaveMode -> noCmd model
         NewLine state -> Modes.NewLine.update state msg model
         DefaultMode -> update_DefaultMode msg model
-        RectSelect orig -> update_RectSelect msg orig model.specialKeys.shift model
+        RectSelect state -> update_RectSelect msg state model.specialKeys.shift model
         EnlargeMode state -> update_Enlarge msg state model
         NewArrow astate -> Modes.NewArrow.update astate msg model
         PullshoutMode astate -> Modes.Pullshout.update astate msg model
@@ -638,18 +642,27 @@ save model =
    (model, saveGraph { info = toJsGraphInfo model 
                               , export = makeExports model })
 
-update_RectSelect : Msg -> Point -> Bool -> Model -> (Model, Cmd Msg)
-update_RectSelect msg orig keep model =
+update_RectSelect : Msg -> SelectState -> Bool -> Model -> (Model, Cmd Msg)
+update_RectSelect msg {orig,hold} keep model =
+   let finalise () =
+          switch_Default 
+                <| setActiveGraph model <| selectGraph model orig keep
+   in
    case msg of
       KeyChanged False _ (Control "Escape") -> switch_Default model
+      KeyChanged False _ (Character 's') -> 
+          if hold then 
+            finalise ()
+          else
+            noCmd <| { model | mode = RectSelect { orig = orig, hold = True } }
       {- MouseUp -> switch_Default 
                   { model | graph = selectGraph model orig keep } -}
       MouseClick ->
+          if hold then noCmd model else
           if model.mousePos == orig then
            switch_Default <| selectByClick model
           else
-           switch_Default 
-                <| setActiveGraph model <| selectGraph model orig keep
+           finalise ()
       -- au cas ou le click n'a pas eu le temps de s'enregistrer
       --   NodeClick n -> switch_Default { model | selectedObjs = [ONode n]} 
       --   EdgeClick n -> switch_Default { model | selectedObjs = [OEdge n]}
@@ -832,7 +845,7 @@ update_DefaultMode msg model =
            
         MouseMove _ -> 
              weaklySelect <| GraphDefs.closest model.mousePos modelGraph             
-        MouseDown _ -> noCmd <| { model | mode = RectSelect model.mousePos }
+        MouseDown _ -> noCmd <| { model | mode = RectSelect {orig = model.mousePos, hold = False} }
         LatexPreambleSwitch -> noCmd <| { model | mode = LatexPreamble model.graphInfo.latexPreamble }
         KeyChanged False _ (Control "Escape") -> clearSel
         KeyChanged False _ (Character '?') -> noCmd <| toggleHelpOverlay model
@@ -1113,12 +1126,29 @@ s                  (GraphDefs.clearSelection modelGraph) } -}
                                 , pos = model.mousePos
                                 , selIds = selIds
                                 })
-        KeyChanged False _ k -> 
-                       updateModifHelper { model | mode = DefaultMode } <|
-             returnUpdateStyle 
-             (ArrowStyle.keyMaybeUpdateStyle k)
-             model 
-             (GraphDefs.selectedEdges modelGraph)
+        KeyChanged False _ k ->
+             let edges = (GraphDefs.selectedEdges modelGraph) in
+             let updNormal () =
+                  updateModifHelper model <|
+                        returnUpdateStyle 
+                      (ArrowStyle.keyMaybeUpdateStyle k)
+                      model   
+                      edges
+             in
+             let updPullshout () =
+                   updateModifHelper model <|
+                        returnUpdatePullshout k
+                      model   
+                      edges 
+             in
+             
+             case edges of
+               [ edge ] -> 
+                   if isPullshout edge.label
+                   then updPullshout ()
+                   else updNormal ()
+               _ -> updNormal ()
+                  
              
           --  case
             
@@ -1308,7 +1338,7 @@ graphDrawingFromModel m =
         MakeSaveMode -> collageGraphFromGraph m modelGraph 
         ColorMode _ -> collageGraphFromGraph m modelGraph
         DefaultMode -> collageGraphFromGraph m modelGraph
-        RectSelect p -> GraphDrawing.toDrawingGraph  <| selectGraph m p m.specialKeys.shift
+        RectSelect {orig} -> GraphDrawing.toDrawingGraph  <| selectGraph m orig m.specialKeys.shift
         EnlargeMode p ->
              enlargeGraph m p
              |> collageGraphFromGraph m
@@ -1466,7 +1496,9 @@ helpMsg model =
                 ++ ", [c]olor arrow" 
                 ++ ", if an arrow is selected: [\""
                 ++ ArrowStyle.controlChars
-                ++ "\"] alternate between different arrow styles, [i]nvert arrow, "
+                ++ "\"] alternate between different arrow styles, "
+                ++  "[\"bB][\"] to customize the pullback/pushout sign, "
+                ++  "[i]nvert arrow, "
                 ++ "[+<] move to the foreground/background (also for vertices)."
 
                 ++ "\nMoving objects:"
@@ -1558,6 +1590,10 @@ helpMsg model =
                          "[g] to resize the grid only. "
                          ++ "[ESC] to cancel, "
                          ++ "[RET] to confirm"
+        RectSelect {hold} -> msg <| "Rectangle selection mode. "
+                         ++ "Draw a rectangle to select objects. [ESC] to cancel. "
+                         ++ if hold then "[s] to confirm." 
+                         else "[s] to select without holding the mouse, [click] to confirm."
 
         _ -> let txt = "Mode: " ++ Modes.toString model.mode ++ ". [ESC] to cancel and come back to the default"
                    ++ " mode."
@@ -1580,7 +1616,7 @@ additionnalDrawing m =
               _ -> drawSelPoint m.mousePos orig
    in
    case m.mode of
-      RectSelect orig -> drawSel InputPosMouse orig
+      RectSelect {orig} -> drawSel InputPosMouse orig
       EnlargeMode state -> 
          case (state.pos, state.direction) of
               (InputPosMouse, Vertical) -> 
