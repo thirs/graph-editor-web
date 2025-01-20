@@ -101,6 +101,7 @@ import Format.Version12
 import Format.Version13
 import Format.Version14
 import Format.Version15
+import Format.Version16
 import Format.LastVersion as LastFormat
 
 import Format.GraphInfo as GraphInfo exposing (Tab)
@@ -167,6 +168,7 @@ port loadedGraph12 : (LoadGraphInfo Format.Version12.Graph -> a) -> Sub a
 port loadedGraph13 : (LoadGraphInfo Format.Version13.Graph -> a) -> Sub a
 port loadedGraph14 : (LoadGraphInfo Format.Version14.Graph -> a) -> Sub a
 port loadedGraph15 : (LoadGraphInfo Format.Version15.Graph -> a) -> Sub a
+port loadedGraph16 : (LoadGraphInfo Format.Version16.Graph -> a) -> Sub a
 
 
 -- port setFirstTabGrph : ()
@@ -194,6 +196,7 @@ port onCut : (() -> a) -> Sub a
 -- we return the stuff to be written
 port clipboardWriteGraph : JsGraphInfo -> Cmd a
 -- statement
+port clipboardWriteLatex : {graph: JsGraphInfo, tex:String} -> Cmd a
 -- port incompleteEquation : { statement : String, script : String} -> Cmd a
 
 -- we send a request to get a proof (by prompt?)
@@ -202,7 +205,7 @@ port requestProof : { statement : String, script : String} -> Cmd a
 port applyProof : { statement : String, script : String} -> Cmd a
 port appliedProof : ({ statement : String, script : String} -> a) -> Sub a
 
-port toClipboard : { content:String, success: String, failure: String } -> Cmd a
+-- port toClipboard : { content:String, success: String, failure: String } -> Cmd a
 port generateProofJs : { proof : String, graph : JsGraphInfo } -> Cmd a
 port generateSvg : String -> Cmd a
 
@@ -237,6 +240,7 @@ subscriptions m =
     [
       protocolReceive ProtocolReceive,
       protocolRequestSnapshot (always ProtocolRequestSnapshot),
+      Modes.NewArrow.returnMarker Marker,
       -- protocolReceiveSnapshot ProtocolReceiveSnapshot,
       makeSave (always MakeSave),
       findReplace FindReplace,
@@ -263,6 +267,7 @@ subscriptions m =
       loadedGraph13 (mapLoadGraphInfo Format.Version13.fromJSGraph >> loadGraphInfoToMsg),
       loadedGraph14 (mapLoadGraphInfo Format.Version14.fromJSGraph >> loadGraphInfoToMsg),
       loadedGraph15 (mapLoadGraphInfo Format.Version15.fromJSGraph >> loadGraphInfoToMsg),
+      loadedGraph16 (mapLoadGraphInfo Format.Version16.fromJSGraph >> loadGraphInfoToMsg),
       setFirstTabEquation SetFirstTabEquation,
       -- decodedGraph (LastFormat.fromJSGraph >> PasteGraph),
       E.onClick (D.succeed MouseClick),
@@ -393,8 +398,21 @@ updateIntercept msg modeli =
            
      _ -> update msg modeli
 
+textNodesToLatex : List NodeLabel -> String
+textNodesToLatex nodes =
+    nodes |> 
+    List.sortBy (\{pos} -> Tuple.second pos) |> 
+    List.map .label |>
+    String.join "\n\n"
+
 graphToTikz : Model -> Graph NodeLabel EdgeLabel -> String
 graphToTikz model graph =
+    let nodes = Graph.nodes graph |> List.map .label in
+    if List.all (.isMath >> not) nodes 
+        && Graph.edges graph == [] then
+       -- return the text
+      textNodesToLatex nodes
+    else
     if model.alternativeLatex then 
       let d = toDrawing model 
             <| GraphDrawing.toDrawingGraph graph
@@ -710,12 +728,6 @@ selectLoop direction model =
 
 
 
-latexToClipboard : String -> Cmd a
-latexToClipboard tex =
-   toClipboard {content = tex,
-                success = "latex successfully copied.",
-                failure = "unable to copy latex"
-            }
 
 generateProofString : Bool -> Graph NodeLabel EdgeLabel -> String
 generateProofString debug g =
@@ -847,8 +859,19 @@ update_DefaultMode msg model =
              weaklySelect <| GraphDefs.closest model.mousePos modelGraph             
         MouseDown _ -> noCmd <| { model | mode = RectSelect {orig = model.mousePos, hold = False} }
         LatexPreambleSwitch -> noCmd <| { model | mode = LatexPreamble model.graphInfo.latexPreamble }
+        Marker s ->
+            let edges = GraphDefs.selectedEdges modelGraph in
+            let newStyle oldStyle = 
+                  if oldStyle.marker == s then Nothing else
+                  Just { oldStyle | marker = s }
+            in
+            if edges == [] then noCmd model else            
+            updateModifHelper model
+            <| GraphDefs.updateStyleEdges newStyle edges modelGraph
+
         KeyChanged False _ (Control "Escape") -> clearSel
         KeyChanged False _ (Character '?') -> noCmd <| toggleHelpOverlay model
+        KeyChanged False _ (Character '.') -> (model, Modes.NewArrow.requestMarkerDefault "")
         KeyChanged False _ (Character 'w') -> clearSel
         KeyChanged False _ (Character 'e') ->
            noCmd <| initialiseEnlarge model
@@ -883,10 +906,10 @@ update_DefaultMode msg model =
                <| Process.sleep pressTimeoutMs)
         KeyChanged False _ (Character 'i') -> 
           --  noCmd <|
-                  case GraphDefs.selectedEdgeId modelGraph of
-                      Just id -> updateModifHelper model 
-                          <| GraphDefs.invertEdge modelGraph id
-                      _ -> noCmd model
+                  case GraphDefs.selectedEdges modelGraph of
+                      [] -> noCmd model
+                      edges -> updateModifHelper model 
+                          <| GraphDefs.invertEdges modelGraph <| List.map .id edges
         {- KeyChanged False _ (Character 'I') -> noCmd <| selectInitial model -}
         {- KeyChanged False _ (Character 'E') -> 
            noCmd <| { model | graph = 
@@ -1022,13 +1045,17 @@ s                  (GraphDefs.clearSelection modelGraph) } -}
         KeyChanged False _ (Control "Delete") ->
             updateModifHelper model <| GraphDefs.removeSelected modelGraph            
         KeyChanged False _ (Character 'X') ->
+            let selectedGraph = GraphDefs.selectedGraph modelGraph in
             let latex = graphToTikz model -- (getActiveSizeGrid model)
-                            (GraphDefs.selectedGraph modelGraph)
+                            selectedGraph
             in
             let cmd = if latex == "" then
                          alert "No diagram found!"
                       else
-                         latexToClipboard latex
+                         clipboardWriteLatex 
+                          {tex = latex,
+                           graph = toJsGraphInfo 
+                            <| Model.restrictSelection model}
             in
               (model, cmd)
             -- fillBottom latex "No diagram found!"
@@ -1497,6 +1524,7 @@ helpMsg model =
                 ++ ", if an arrow is selected: [\""
                 ++ ArrowStyle.controlChars
                 ++ "\"] alternate between different arrow styles, "
+                ++ "[.] customise arrow marker, "
                 ++  "[\"bB][\"] to customize the pullback/pushout sign, "
                 ++  "[i]nvert arrow, "
                 ++ "[+<] move to the foreground/background (also for vertices)."
@@ -1548,18 +1576,16 @@ helpMsg model =
                     ++ " [RET] to accept the current chain"       
                     ++ ", [ESC] to cancel and comeback to the default mode."]
                 ] -}
-        NewArrow _ -> "Mode NewArrow. "
+        NewArrow s -> "Mode NewArrow. "
                           -- ++ Debug.toString model 
-                           ++  Modes.NewArrow.help |> msg
+                           ++  Modes.NewArrow.help s |> msg
         LatexPreamble _ -> "Mode latex preamble." |> msg
         NewLine _ -> "Mode NewLine. "
                            ++  Modes.NewLine.help |> msg
         PullshoutMode _ -> "Mode Pullback/Pullshout. "
                           -- ++ Debug.toString model 
                            ++  Modes.Pullshout.help |> msg
-        ColorMode _ -> "Mode color. "
-                        ++ overlayHelpMsgNewLine
-                        ++ "[ESC] or colorise selected edges: " ++ Color.helpMsg |> msg
+        ColorMode s -> Modes.Color.help s |> msg 
         SquareMode _ -> "Mode Commutative square. "
                              ++ Modes.Square.help |> msg
         SplitArrow _ -> "Mode Split Arrow. "

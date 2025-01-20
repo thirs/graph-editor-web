@@ -139,16 +139,19 @@ function escapeStringRegexp(s:string):string {
     return s.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
  }
 
-function parseMagic(magic:string, line:string):{content:string|null,indent:string} {
+interface MagicInfo {content:string,indent:string,prefix:string};
+
+function parseMagic(magic:string, line:string):MagicInfo|undefined {
     let magicRe = new RegExp(escapeStringRegexp(magic.trim()) + "(.*)$");
-    let search = magicRe.exec(line.trim());
+    let search = magicRe.exec(line.trimEnd());
   
     if (search !== null) {
       let indent = line.search(/\S|$/);
       return {content:search[1].trim(), 
-              indent:line.substring(0,indent)};
+              indent:line.substring(0,indent),
+              prefix:line.substring(0,search.index)};
     } else {
-      return {content:null,indent:""};
+      return undefined;
     }
 }
 
@@ -210,40 +213,36 @@ function writeLines(fd:string[], lines:string[], indent:string) {
 async function writeContent( config:Config, d:FileSystemDirectoryHandle, newcontent:string, output:string, index:number, watchedFile:string) {
     let fd:string[] = [];
     const file_lines = await getLinesFromFilepath(d, watchedFile);
-    
     let line:false|string = false;
-    let content:string|null = null;
-    let indent = "";
+    let magicInfo:MagicInfo|undefined = undefined;
     for (let i=0; i < index; i++) {
       writeLine(fd, line);
-      content = null;
       line = false;
-      while (content === null) {
+      magicInfo = undefined;
+      while (magicInfo === undefined) {
          writeLine(fd, line);
          line = readLine(file_lines);
          if (line === false)
            break;
-         let magic = parseMagic(config.magic, line);
-         content = magic.content;
-         indent = magic.indent;
+         magicInfo = parseMagic(config.magic, line);
       }
     }
-    if (content === null) {
+    if (magicInfo === undefined) {
        console.log("error");
        throw new Error("error");
        return;
     }
-    let isFile = contentIsFile(content);
+    let isFile = contentIsFile(magicInfo.content);
     if (isFile)
        writeLine(fd, line)
     else
-       writeLine(fd, indent + config.magic + " " + newcontent)
-       writeLines(fd, config.prefixes, indent);
+       writeLine(fd, magicInfo.prefix + config.magic + " " + newcontent)
+       writeLines(fd, config.prefixes, magicInfo.indent);
     if (! config.externalOutput || ! isFile)
-       writeLines(fd, output.split("\n"), indent);
+       writeLines(fd, output.split("\n"), magicInfo.indent);
     else
-       writeLine(fd, indent + config.includeCmd.replace("@", outputFileName(config, content)));
-    writeLines(fd, config.suffixes, indent);
+       writeLine(fd, magicInfo.indent + config.includeCmd.replace("@", outputFileName(config, magicInfo.content)));
+    writeLines(fd, config.suffixes, magicInfo.indent);
     while (line !== false) {
       line = readLine(file_lines);
       if (line === false) {
@@ -338,24 +337,26 @@ export async function checkWatchedFile(config:Config, d:FileSystemDirectoryHandl
     let remainder:string[]|null = [];
     let index = 0;
     let line = "" as string|false;
-    let content:string|null = null;
+    let content:string|undefined = undefined;
     let lineNum = 0;
+    let magicLineNumber = 0;
     while (line !== false && remainder !== null && remainder.length == 0) {
       index++;
-      content = null;
-      while (content === null) {
+      content = undefined;
+      while (content === undefined) {
         line = readLine(file_lines);
         lineNum++;
         if (line === false)
             break;
-        content = parseMagic(config.magic, line).content;
+        content = parseMagic(config.magic, line)?.content;
       }
+      magicLineNumber = lineNum;
       if (line === false)
         break;
       
       console.log("Graph found");
       // check if the tex file exists
-      if (content !== null && config.externalOutput && contentIsFile(content)) {
+      if (content !== undefined && config.externalOutput && contentIsFile(content)) {
         let diagFile = content;
         let outputFile = outputFileName(config,diagFile);
         let checkExist = await checkFileExistsFromPath(d,outputFile);
@@ -377,11 +378,12 @@ export async function checkWatchedFile(config:Config, d:FileSystemDirectoryHandl
         if (line === false)
            // EOF
            break;
+        lineNum++;
         remainder = parsePrefix(line, remainder)
       }
     }
   
-    if (!((remainder === null || remainder.length > 0) && content !== null)){
+    if (!((remainder === null || remainder.length > 0) && content !== undefined)){
       return false;
     }
     
@@ -397,7 +399,7 @@ export async function checkWatchedFile(config:Config, d:FileSystemDirectoryHandl
       
     let handleConfig:HandleFileConfig = 
        {content:content, config:config,watchedFile:watchedFile,
-        line:lineNum,
+        line:magicLineNumber,
          diagFile:diagFile, index:index, onlyExternalFile: false};
     return handleConfig;
       // console.log(content);
