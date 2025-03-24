@@ -26,7 +26,7 @@ module GraphDefs exposing (defaultPullshoutShift, EdgeLabel, NodeLabel, allDimsR
    rectEnveloppe, updateStyleEdges, updatePullshoutEdges,
    getSelectedProofDiagram, MaybeProofDiagram(..), selectedChain, MaybeChain(..),
    createValidProofAtBarycenter, isProofLabel, makeProofString, posGraph
-   ,invertEdge
+   ,invertEdges
    , edgeScaleFactor
    , keyMaybeUpdatePullshout
    )
@@ -38,7 +38,7 @@ import Geometry.Point as Point exposing (Point)
 import Geometry exposing (LabelAlignment(..))
 import Geometry.QuadraticBezier as Bez
 import EdgeShape exposing (EdgeShape(..), pullshoutHat)
-import ArrowStyle exposing (ArrowStyle)
+import ArrowStyle exposing (ArrowStyle, EdgePart)
 import Polygraph as Graph exposing (Graph, NodeId, EdgeId, Node, Edge)
 import GraphProof exposing (LoopNode, LoopEdge, Diagram)
 
@@ -330,14 +330,17 @@ md_updatePullshoutEdge id f =
     Graph.md_updateEdge id 
      (mapPullshoutEdge f)
 
-setColorEdgesId : Color.Color -> List EdgeId -> Graph NodeLabel EdgeLabel -> 
+
+
+setColorEdgesId : Color.Color -> EdgePart -> List EdgeId -> Graph NodeLabel EdgeLabel -> 
            Graph.ModifHelper NodeLabel EdgeLabel
-setColorEdgesId color edges graph =
+setColorEdgesId color part edges graph =
      let updateColor e = 
            case e.details of
             NormalEdge l -> 
                let oldStyle = l.style in
-               { e | details = NormalEdge { l | style = { oldStyle | color = color }}}
+               let newStyle = ArrowStyle.updateEdgeColor part color oldStyle in
+               { e | details = NormalEdge { l | style = newStyle }}
             PullshoutEdge x -> {e | details = PullshoutEdge { x | color = color}} 
      in
      let modif = Graph.newModif graph in
@@ -850,11 +853,17 @@ rectEnveloppe g =
    let points = Graph.nodes g |> List.map (.label >> .pos) in
    Geometry.rectEnveloppe points
 
-invertEdge : Graph NodeLabel EdgeLabel -> EdgeId -> Graph.ModifHelper NodeLabel EdgeLabel
-invertEdge g id = Graph.md_updateEdge id
-                  (mapNormalEdge (\ l -> { l | style = ArrowStyle.invert l.style}))
-                          <| Graph.md_invertEdge id 
-                          <| Graph.newModif g
+invertEdges : Graph NodeLabel EdgeLabel -> List EdgeId -> Graph.ModifHelper NodeLabel EdgeLabel
+invertEdges g ids =
+   List.foldl (Graph.md_invertEdge)
+   (Graph.md_updateEdgesId ids
+      (mapNormalEdge (\ l -> { l | style = ArrowStyle.invert l.style}))
+      <| Graph.newModif g
+   )
+   ids
+   
+   
+
 
 -- doesn't update the color
 keyMaybeUpdatePullshout : Key -> { a | offset1 : Float, offset2 : Float} -> Maybe { a | offset1 : Float, offset2 : Float}
