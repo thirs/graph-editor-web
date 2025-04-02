@@ -80,7 +80,6 @@ type alias Model = {
     -- margin for the rule
     , rulerMargin : Int
     , rulerShow : Bool
-    , alternativeLatex : Bool
     
     }
 
@@ -287,7 +286,6 @@ createModel {defaultGridSize, rulerMargin, saveLoadButtons} =
     , topModifId = defaultModifId
     , mode = DefaultMode
     , statusMsg = ""
-    , alternativeLatex = True
     , mouseOnCanvas = False
      -- Debug.toString ([pointToAngle (0,1), pointToAngle (0.001,1),
       --                    pointToAngle (1,0), pointToAngle(0,-1),
@@ -482,22 +480,6 @@ restrictSelection model =
                                , nextTabId = 1 }
       }
 
-returnSetColor : Maybe (Color.Color)
-                  -> Model -> 
-                  EdgePart
-                  -> List (Graph.Edge EdgeLabel)
-                  -> Graph.ModifHelper NodeLabel EdgeLabel -- (Model, Cmd Msg)
-returnSetColor colorOption model part edges =
-    case colorOption of
-      Nothing -> Graph.newModif <| getActiveGraph model
-      Just color ->
-        let modifHelper = GraphDefs.setColorEdgesId 
-                      color
-                      part
-                      (List.map .id edges)
-                      (getActiveGraph model)
-        in
-        modifHelper
 
 returnUpdatePullshout : Key -> Model -> List (Graph.Edge EdgeLabel) 
                        -> Graph.ModifHelper NodeLabel EdgeLabel

@@ -44,7 +44,6 @@ import Html.Events
 import Maybe.Extra as Maybe
 import IntDict
 import Unification
-import Tikz
 
 import Parser exposing ((|.), (|=), Parser)
 import Set
@@ -70,7 +69,7 @@ import Modes.Pullshout
 import Modes.CutHead
 import Modes.Move
 import Modes.Rename
-import Modes.Color
+import Modes.Customize
 import Drawing.Color as Color
 import Modes exposing (Mode(..), SelectState, MoveDirection(..), isResizeMode, ResizeState, EnlargeState)
 
@@ -108,7 +107,6 @@ import Format.LastVersion as LastFormat
 import Format.GraphInfo as GraphInfo exposing (Tab)
 
 import List.Extra
-import GraphDefs exposing (exportQuiver)
 import GraphProof
 import GraphDrawing
 import String.Svg
@@ -141,7 +139,6 @@ port quicksaveGraph : { info : JsGraphInfo, export: ExportFormats, autosave : Bo
 port saveGraph : {info: JsGraphInfo, export: ExportFormats} -> Cmd a
 port makeSave : (() -> a) -> Sub a
 
-port exportQuiver : JE.Value -> Cmd a
 port alert : String -> Cmd a
 
 
@@ -416,13 +413,10 @@ graphToTikz model graph =
        -- return the text
       textNodesToLatex nodes
     else
-    if model.alternativeLatex then 
-      let d = toDrawing model 
+     let d = toDrawing model 
             <| GraphDrawing.toDrawingGraph graph
-      in
-      Drawing.tikz d
-    else 
-      Tikz.graphToTikz model.defaultGridSize graph
+     in
+     Drawing.tikz d
 
 makeExports : Model -> ExportFormats
 makeExports model = 
@@ -574,11 +568,7 @@ update msg modeli =
          --  (iniModel, Task.attempt (always Msg.noyarn comOp) (Dom.focus HtmlDefs.canvasId))
      ToggleHideGrid -> noCmd {model | hideGrid = not model.hideGrid}     
      ToggleHideRuler -> noCmd {model | rulerShow = not model.rulerShow}  
-     ToggleAlternativeLatex -> noCmd {model | alternativeLatex = not model.alternativeLatex}
      ToggleAutosave -> noCmd {model | autoSave = not model.autoSave}     
-     ExportQuiver -> (model,  
-                    exportQuiver <| 
-                     GraphDefs.exportQuiver sizeGrid (GraphDefs.selectedGraph modelGraph))
      MouseMoveRaw v _ -> (model, onMouseMove v)
      NodeRendered n (x,y) ->
                 -- let _ = Debug.log "nouvelle dims !" (n, dims) in
@@ -600,9 +590,15 @@ update msg modeli =
                      noCmd { modelf | scenario = SimpleScenario, statusMsg = s }
      SetFirstTab g ->
          let tab = GraphInfo.getActiveTab g in
-        (updateFirstTab model <| \t ->
-                  { tab | title = t.title },
-                 computeLayout ())
+         let newModel = 
+               updateFirstTab model <| \t ->
+                  { tab | title = t.title }
+         in
+          if model.graphInfo.latexPreamble == g.latexPreamble then
+            (newModel, computeLayout ())
+          else
+               updateModif newModel
+                <| GraphInfo.LatexPreamble g.latexPreamble
      Loaded {scenario, graph} ->
         (model, protocolSendMsg 
             <| LoadProtocol {graph = graph, scenario = 
@@ -629,7 +625,7 @@ update msg modeli =
         SplitArrow state -> Modes.SplitArrow.update state msg model
         CutHead state -> Modes.CutHead.update state msg model
         ResizeMode s -> update_Resize s msg model
-        ColorMode ids -> Modes.Color.update ids msg model -- update_Color ids msg model
+        CustomizeMode ids -> Modes.Customize.update ids msg model -- update_Color ids msg model
         LatexPreamble s -> update_LatexPreamble s msg model
 
 update_LatexPreamble : String -> Msg -> Model -> (Model, Cmd Msg)
@@ -940,7 +936,7 @@ s                  (GraphDefs.clearSelection modelGraph) } -}
         KeyChanged False k (Character 'c') -> 
             if k.ctrl then noCmd model -- we don't want to interfer with the copy event C-c
             else
-            noCmd <| Modes.Color.initialise model
+            noCmd <| Modes.Customize.initialise model
                 -- , 
                 --   graph = GraphDefs.clearSelection 
                 --   <| GraphDefs.clearWeakSelection modelGraph }              
@@ -1366,7 +1362,7 @@ graphDrawingFromModel m =
     let modelGraph = getActiveGraph m in
     case m.mode of
         MakeSaveMode -> collageGraphFromGraph m modelGraph 
-        ColorMode _ -> collageGraphFromGraph m modelGraph
+        CustomizeMode s -> Modes.Customize.graphDrawing m s
         DefaultMode -> collageGraphFromGraph m modelGraph
         RectSelect {orig} -> GraphDrawing.toDrawingGraph  <| selectGraph m orig m.specialKeys.shift
         EnlargeMode p ->
@@ -1523,7 +1519,7 @@ helpMsg model =
                 ++ ", new li[n]e"  
                 ++ ", [/] split arrow" 
                 ++ ", [C]ut head of selected arrow" 
-                ++ ", [c]olor arrow" 
+                ++ ", [c]ustomise arrow (color, shift)" 
                 ++ ", if an arrow is selected: [\""
                 ++ ArrowStyle.controlChars
                 ++ "\"] alternate between different arrow styles, "
@@ -1588,7 +1584,7 @@ helpMsg model =
         PullshoutMode _ -> "Mode Pullback/Pullshout. "
                           -- ++ Debug.toString model 
                            ++  Modes.Pullshout.help |> msg
-        ColorMode s -> Modes.Color.help s |> msg 
+        CustomizeMode s -> Modes.Customize.help s |> msg 
         SquareMode _ -> "Mode Commutative square. "
                              ++ Modes.Square.help |> msg
         SplitArrow _ -> "Mode Split Arrow. "
@@ -1782,9 +1778,7 @@ viewGraph model =
            --  , Html.button [Html.Events.onClick FindInitial] [Html.text "Initial"]
            , HtmlDefs.checkbox ToggleHideGrid "Show grid" "" (not model.hideGrid)           
            , HtmlDefs.checkbox ToggleHideRuler "Show ruler" "" model.rulerShow           
-           , HtmlDefs.checkbox ToggleAlternativeLatex "Legacy latex generation" "The legacy latex generation relies on Tikz to compute the exact position of edges" (not model.alternativeLatex)
            , HtmlDefs.checkbox ToggleAutosave "Autosave" "Quicksave every minute" (model.autoSave)
-           , Html.button [Html.Events.onClick ExportQuiver] [Html.text "Export selection to quiver"] 
            , Html.button [Html.Events.onClick SaveRulerGridSize] [Html.text "Save ruler & grid size preferences"] 
            , Html.button [Html.Events.onClick OptimalGridSize, 
               Html.Attributes.title "Select two nodes. The new grid size is the max of the coordinate differences."] 
