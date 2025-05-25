@@ -266,6 +266,13 @@ function disableInAppInstallPrompt() {
                          // attribute that tells whether it has
                          // a listener
                          var rect = { width : node.clientWidth , height : node.clientHeight }
+                         // no need to notify Elm if the rectangle hasn't changed.
+                         if (node.previousRect 
+                                  && node.previousRect.width == rect.width
+                                  && node.previousRect.height == rect.height)
+                            return;
+                         node.previousRect = rect;
+                         // no need to update
                          /* if (node.tagName = "MATH-LATEX") {
                             console.log (rect);
                             console.log (node.getBoundingClientRect());
@@ -624,7 +631,8 @@ function disableInAppInstallPrompt() {
                 elmnt.select();
          });
 
-         app.ports.computeLayout.subscribe(function(s) {                         
+         app.ports.computeLayout.subscribe(function(s) { 
+             console.log("compute layout signal");                        
              var children = document.getElementsByClassName(renderedClass);             
              for (var i = 0; i < children.length; ++i) {
                           dispatchRendered(children[i]);
@@ -841,7 +849,7 @@ function disableInAppInstallPrompt() {
          });
 
 
-         /*
+         
          function toClipboard({content, success, failure}) {
             navigator.clipboard.writeText(content).then(
             () => {
@@ -851,7 +859,7 @@ function disableInAppInstallPrompt() {
                 failure && customAlert(failure);
             });
          };
-         
+         /*
          app.ports.toClipboard.subscribe(toClipboard);
          */
 
@@ -1084,32 +1092,6 @@ function disableInAppInstallPrompt() {
             connectToServer(defaultServer);
        }
 
-         // copied from index.ts
-
-function loadDataFromVscode(data, filename, scenario,  setFirstTab = false) {
-
-  let stripped_diag = data.trim();
-  try {
-
-    let json = JSON.parse (stripped_diag);
-    if (setFirstTab)
-       sendGraphToElm(json, "coqlsp", false, true);
-    //   mainWindow.webContents.send('set-first-tab', json); 
-    else
-    //      mainWindow.webContents.send('load-graph', json, filename, scenario); 
-       sendGraphToElm(json, scenario);
-    }
-  catch (e) {
-      if (e instanceof SyntaxError) {
-      // if it is not a valid json, then it must be an equation 
-        let equation = stripped_diag.slice(1, -1);
-        // mainWindow.webContents.send('load-equation', equation , scenario);
-        app.ports.setFirstTabEquation.send(equation);
-      }
-      else 
-        throw e;
-  }
-}
 
          // copied from configureIpc()
 
@@ -1133,10 +1115,10 @@ function loadDataFromVscode(data, filename, scenario,  setFirstTab = false) {
               callback(msg.content); 
               break;
           case "set-first-tab":
-            setFirstTab = true;
-          case "load":
-            loadDataFromVscode(msg.content, "graph.json", "coqlsp", 
-                setFirstTab)
+            sendGraphToElm(msg.content, "coqlsp", false, true);
+            break;
+          case "set-first-tab-equation":
+            app.ports.setFirstTabEquation.send(msg.content);
             break;
           case "applied-proof":
             app.ports.appliedProof.send(msg.content);
