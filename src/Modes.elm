@@ -1,26 +1,29 @@
 module Modes exposing (..)
 
-import ArrowStyle exposing (ArrowStyle)
+import ArrowStyle exposing (ArrowStyle, EdgePart)
 import Geometry.Point exposing (Point)
 import Polygraph as Graph exposing (EdgeId, NodeId)
-import QuickInput
 import InputPosition exposing (InputPosition)
-import GraphDefs
+import GraphDefs exposing (NodeLabel, EdgeLabel)
+import Format.GraphInfo as GraphInfo exposing (TabId)
+import Msg exposing (ModifId, MoveMode)
+import Drawing.Color as Color
+
 
 
 type Mode
     = DefaultMode
     | NewArrow NewArrowState
+    | NewLine NewLineState
     | Move MoveState
       -- the list of ids to be edited, with associated default labels 
       -- (which may differ from the labels of the objects in the model)
       -- the boolean specifies whether we need to save the state at the
       -- end
-    | RenameMode Bool (List (Graph.Id, String))
-    | DebugMode    
-    | QuickInputMode (Maybe QuickInput.Equation)
+    | RenameMode RenameState
+    | DebugMode
     | SquareMode SquareState
-    | RectSelect Point
+    | RectSelect SelectState
     -- Bool -- keep previous selection?
       -- | SplitArrow EdgeId
     | SplitArrow SplitArrowState
@@ -30,13 +33,35 @@ type Mode
     -}
     | EnlargeMode EnlargeState
     | CutHead CutHeadState
-    | CloneMode
     | ResizeMode ResizeState -- current sizegrid
     | PullshoutMode PullshoutState
+    | CustomizeMode CustomizeModeState
+    | MakeSaveMode
+    | LatexPreamble String
 
-type alias CutHeadState = { id: Graph.EdgeId
+toString : Mode -> String
+toString m = case m of
+    DefaultMode -> "Default"
+    NewArrow _ -> "New arrow"
+    NewLine _ -> "New line"
+    Move _ -> "Move"
+    RenameMode _ -> "Rename"
+    DebugMode -> "Debug"
+    LatexPreamble _ -> "Latex preamble"
+    SquareMode _ -> "Square"
+    RectSelect _ -> "Rect select"
+    SplitArrow _ -> "Split arrow"
+    EnlargeMode _ -> "Enlarge"
+    CutHead _ -> "Cut head"
+    ResizeMode _ -> "Resize"
+    PullshoutMode _ -> "Pullshout"
+    CustomizeMode _ -> "Color"
+    MakeSaveMode -> "MakeSave"
+
+type alias CutHeadState = { edge: Graph.Edge EdgeLabel
     , head : Bool -- the head or the tail?
     , duplicate : Bool -- duplicate the arrow? 
+    -- , merge : Bool
     }
 
 isResizeMode : Mode -> Bool
@@ -44,25 +69,43 @@ isResizeMode m = case m of
    ResizeMode _ -> True
    _ -> False
 
+type alias SelectState =
+ { orig : Point, 
+   hold : Bool}
+
 type alias ResizeState = 
    { sizeGrid : Int,
      onlyGrid : Bool
    }
+type alias RenameState = 
+   { next:List { id : Graph.Id, tabId : TabId, label : String},
+     idModif : ModifId,
+     -- the input text is selected when first editing
+     -- but on rerendering the input, ti should not select again
+     alreadySelected : Bool }
+        {- { next : List { id : Graph.Id, label : Maybe String, tabId : GraphInfo.TabId } 
+        , idModif : ModifId
+        } -}
+
 
 type alias MoveState = 
-   { orig : Point,  -- mouse original point at the beginning of the move mode
-     -- this was used to compute the move relative to this point, but this
-     -- is no longer used
-      pos : InputPosition
-      -- , merge : Bool 
+   {   pos : InputPosition
       -- should we save at the end
-      , save : Bool
-      }
+     , idModif : ModifId
+     , mode : MoveMode
+     , direction : MoveDirection
+    --  , merge : Bool
+  }
+type MoveDirection =
+  Free | Vertical | Horizontal
+
+    
 
 type alias EnlargeState = 
    { orig : Point, -- mouse original point at the beginning of the move mode
      -- onlySubdiag : Bool,
      pos : InputPosition
+   , direction : MoveDirection
    }
 
 type alias SplitArrowState =
@@ -78,20 +121,47 @@ type alias SplitArrowState =
 
 type alias PullshoutState =
     { chosenEdge : EdgeId
-    , source : Graph.Id
-    , target : Graph.Id
+    -- , source : Graph.Id
+    -- , target : Graph.Id
+    , color : Color.Color
     , kind : PullshoutKind
     , currentDest : EdgeId
     , possibilities : List EdgeId
+    , offset1 : Float
+    , offset2 : Float
     }
 
 type PullshoutKind = Pullback | Pushout
 
+type ArrowStateKind =
+    CreateArrow Graph.Id
+  | CreateCylinder
+  | CreateCone
 
 
+type alias CustomizeModeState = 
+   { edges: (List (Graph.Edge EdgeLabel)),
+      mode : EdgePart
+      -- the style of the singleton edge being selected
+      -- we can change its bend/shift
+      -- style : Maybe ArrowStyle
+    }
+
+
+type alias NewLineState = {
+    initialPos : Point,
+    bend : Float
+    }
 
 type alias NewArrowState =
-    { chosenNode : NodeId, style : ArrowStyle, pos : InputPosition, inverted : Bool }
+    { chosen : Graph.Graph NodeLabel EdgeLabel,
+      kind : ArrowStateKind, 
+      mode : EdgePart,
+      style : ArrowStyle, 
+      pos : InputPosition, inverted : Bool,
+      isAdjunction : Bool,
+      merge : Bool
+       }
 
 
 type alias SquareState =

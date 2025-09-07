@@ -7,17 +7,16 @@ module Geometry exposing (raytraceRect, PosDims, Rect, pad, makeRect,
    -- from Quiver
    , determine_label_position
    , rectFromPosDims
+   , posDimsFromRect
    , distanceToRect
+   , LabelAlignment(..)
   )
 
 import Geometry.Point as Point exposing (Point)
 import Geometry.QuadraticBezier exposing (QuadraticBezier)
 import Geometry.Bezier as Bezier exposing (Bezier)
-import Collage.Layout exposing (bottomRight)
-import Collage.Layout exposing (topLeft)
 -- import ArrowStyle exposing (PosLabel(..))
 import Geometry.RoundedRectangle exposing (RoundedRectangle)
-import ArrowStyle exposing (LabelAlignment(..))
 
 
 type alias PosDims = { pos : Point, dims : Point }
@@ -57,6 +56,11 @@ rectFromPosDims { pos, dims } =
    (Point.subtract pos dims2)
    (Point.add pos dims2)
 
+posDimsFromRect : Rect -> PosDims
+posDimsFromRect { topLeft, bottomRight } =
+   let center = Point.add topLeft bottomRight |> Point.resize 0.5 in
+   PosDims center <| Point.subtract bottomRight topLeft
+
 isInRect : Rect -> Point -> Bool 
 isInRect {topLeft , bottomRight} (x, y) =
   let (x1, y1) = topLeft
@@ -90,8 +94,28 @@ pxFromRatio p1 p2 r =
 
 segmentRectBent : PosDims -> PosDims -> Float -> QuadraticBezier
 segmentRectBent r1 r2 bent = 
+    let (r1_bis, r2_bis, bent_bis) =
+             if r1.pos /= r2.pos then 
+              (r1, r2, bent)
+             else 
+               let (w1, h1) = r1.dims
+                   (w2, h2) = r2.dims
+               in               
+              --  let offset = max ((min w1 w2) / 3) 7 in
+              let offset = 7 in
+               let new_w w = 2 in -- max 1 (w - offset) in
+               let newBent = -40 / offset in
+               ({pos = Point.add r1.pos (-offset, 0), dims = (new_w w1, h1)},
+                {pos = Point.add r2.pos ( offset, 0), dims = (new_w w2, h2)},
+                newBent)
+    in
+      segmentRectBent_aux r1_bis r2_bis bent_bis
+
+
+segmentRectBent_aux : PosDims -> PosDims -> Float -> QuadraticBezier
+segmentRectBent_aux r1 r2 bent = 
     let controlPoint = Point.diamondPx r1.pos r2.pos 
-                        <| pxFromRatio r1.pos r2.pos bent 
+          <| pxFromRatio r1.pos r2.pos bent 
     in
    
     let p1 =
@@ -101,7 +125,15 @@ segmentRectBent r1 r2 bent =
              raytraceRect controlPoint r2.pos (rectFromPosDims r2) |>
              Maybe.withDefault r2.pos 
     in
-        { from = p1, to = p2, controlPoint = controlPoint }
+    -- we recompute the controlPoint to avoid
+    -- glitch (e.g., if the source is much bigger than the target,
+    -- there the control point could be in a vert wrong location,
+    -- resulting in inversion of the arrow head or strange double arrows)
+    let betterControlPoint =
+          Point.diamondPx p1 p2
+          <| pxFromRatio p1 p2 bent 
+    in
+        { from = p1, to = p2, controlPoint = betterControlPoint }
 
 
 raytraceRect : Point -> Point -> Rect -> Maybe Point
@@ -143,6 +175,12 @@ distance ro rd (aa,bb) =
                    Just maxLo
            _ -> Nothing
 
+-- from Quiver
+type LabelAlignment =
+    Centre
+  | Over
+  | Left 
+  | Right
 
 -- translated from https://github.com/varkor/quiver/blob/2c62d40b820cadc3c7f9d0816a33121f389b6240/src/arrow.js#L1247
 -- determine_label_position :
@@ -158,6 +196,7 @@ determine_label_position length angle edge_width start end curve label_position 
    in
    let centre = Bezier.point bezier (start + (end - start) * label_position)
    in
+   if label_alignement == Over then centre else
    let offset_angle = case label_alignement of
             Centre -> 0
             Over -> 0
@@ -170,7 +209,8 @@ determine_label_position length angle edge_width start end curve label_position 
    let while i offset_min offset_max =
         let label_offset = (offset_min + offset_max) / 2 in 
         if i == 0 then 
-          Debug.log "Had to bail out from determining label offset." label_offset
+          -- Debug.log "Had to bail out from determining label offset." 
+          label_offset
         else
         let nexti = i - 1 in
         let rect_centre = Point.rotate angle centre

@@ -1,52 +1,57 @@
 
 module GraphDrawing exposing(..)
 
-import Polygraph as Graph exposing (Graph, Node, Edge)
+import Polygraph as Graph exposing (Graph, Node, Edge, Id)
 import Html 
 import Html.Attributes
 import Html.Events
 import Drawing exposing (Drawing)
-import ArrowStyle exposing (ArrowStyle)
+import Drawing.Color as Color exposing (Color)
+import ArrowStyle exposing (ArrowStyle, MarkerStyle)
 import Geometry.Point as Point exposing (Point)
 import Msg exposing (Msg(..))
-import Color exposing (..)
 import GraphDefs exposing (NodeLabel, EdgeLabel, NormalEdgeLabel)
 import Geometry 
+import Verbatim
 import Geometry.QuadraticBezier as Bez exposing (QuadraticBezier)
 import HtmlDefs
-import Json.Decode as D
 import Html.Events.Extra.Mouse as MouseEvents
-
-foregroundZ = 10000
+import Zindex exposing (foregroundZ)
+import EdgeShape exposing (EdgeShape(..), Hat)
+import Json.Decode
 
 -- these are extended node and edge labels used for drawing (discarded for saving)
 type alias NormalEdgeDrawingLabel = 
    { label : String, editable : Bool,
-     style : ArrowStyle, dims : Point }
+     style : ArrowStyle, dims : Point, isAdjunction : Bool }
 
 type EdgeType = 
-    PullshoutEdge
+    PullshoutEdge {color : Color.Color}
   | NormalEdge NormalEdgeDrawingLabel
 
-type alias EdgeDrawingLabel = { details : EdgeType, isActive : Activity, zindex : Int}
+type alias EdgeDrawingLabel = { details : EdgeType, shape : EdgeShape, isActive : Activity, zindex : Int}
 
 mapNormalEdge : (NormalEdgeDrawingLabel -> NormalEdgeDrawingLabel) -> EdgeDrawingLabel -> EdgeDrawingLabel
 mapNormalEdge f e = 
   {isActive = e.isActive,
    zindex = e.zindex,
+   shape = e.shape,
    details = case e.details of
-               PullshoutEdge -> PullshoutEdge
+               PullshoutEdge x -> PullshoutEdge x
                NormalEdge l -> NormalEdge <| f l
   }
 
 
 type alias NodeDrawingLabel =
-    { pos : Point,
+    { pos : Point, 
+    -- is it marked as validated
+    isValidated : Bool,
       inputPos : Point, -- where the input text should be located
       -- (differ from pos in the case the node is a text)
      label : String, editable : Bool, isActive : Activity,
       isMath : Bool,
-          dims : Point 
+          dims : Point,
+          zindex : Int
           -- whether I should watch entering and leaving 
           -- node
           -- watchEnterLeave : Bool
@@ -60,12 +65,13 @@ type Activity =
    | NoActive
 
 toDrawingGraph : Graph NodeLabel EdgeLabel -> Graph NodeDrawingLabel EdgeDrawingLabel
-toDrawingGraph =
+toDrawingGraph g =
     let makeActivity r =
            if r.selected then MainActive
            else if r.weaklySelected then WeakActive
            else NoActive
     in
+    let graphWithPos = GraphDefs.posGraph g in
     Graph.map
         (\ _ n ->  make_nodeDrawingLabel
           { editable = False
@@ -73,9 +79,11 @@ toDrawingGraph =
           } n)
         (\ _ e ->  make_edgeDrawingLabel
                     { editable = False, 
-                      isActive = makeActivity e
-                    } e
+                      isActive = makeActivity e.label,
+                      shape = e.shape
+                    } e.label
         )
+        graphWithPos
 
 makeActive : List Graph.Id -> Graph NodeDrawingLabel EdgeDrawingLabel ->  Graph NodeDrawingLabel EdgeDrawingLabel
 makeActive l = Graph.updateList l 
@@ -83,16 +91,18 @@ makeActive l = Graph.updateList l
              (\ e -> { e | isActive = MainActive})
              
 
-make_edgeDrawingLabel : {editable : Bool, isActive : Activity} 
+make_edgeDrawingLabel : {editable : Bool, isActive : Activity, shape : EdgeShape} 
                       -> EdgeLabel -> EdgeDrawingLabel
-make_edgeDrawingLabel {editable, isActive} e =
-   { isActive = isActive, zindex = e.zindex,
+make_edgeDrawingLabel {editable, isActive, shape} e =
+   { isActive = isActive, zindex = e.zindex, shape = shape,
      details = case e.details of 
-        GraphDefs.PullshoutEdge -> PullshoutEdge
-        GraphDefs.NormalEdge ({label, style} as l) ->
+        GraphDefs.PullshoutEdge x -> PullshoutEdge { color = x.color}
+        GraphDefs.NormalEdge ({label, style, isAdjunction} as l) ->
            NormalEdge { label = label, editable = editable, 
+              isAdjunction = isAdjunction,
               style = style,
               dims = GraphDefs.getEdgeDims l
+              -- bezier = bezier |> Maybe.withDefault Bez.dummy
             }
    }
     
@@ -105,13 +115,15 @@ make_nodeDrawingLabel {editable, isActive} ({label, pos, isMath} as l) =
     { label = label {- if l.isMath || editable then label else "\\text{" ++ label ++ "}" -}
     , pos = nodePos
     , inputPos = pos
+    , isValidated = l.isCoqValidated
     , editable = editable, isActive = isActive, isMath = isMath,
-      dims = GraphDefs.getNodeDims l }
+      dims = if editable then (0,0) else GraphDefs.getNodeDims l
+    , zindex = l.zindex }
 
 
 -- create an input with id curIdInput
-make_input : Point -> String -> (String -> Msg) -> Drawing Msg
-make_input pos label onChange =
+make_input : Maybe String -> Point -> String -> (String -> Msg) -> Drawing Msg
+make_input key pos label onChange =
          Html.input ([ Html.Attributes.value label ,
                        Html.Events.onInput onChange,
                        Msg.onTabPreventDefault,
@@ -119,19 +131,11 @@ make_input pos label onChange =
                        Html.Attributes.autofocus True,
                        Html.Attributes.style "width"
                            <| String.fromInt (String.length label + 1) ++ "ch"
-                    ] ++ 
-                    HtmlDefs.onRendered (always <| Do <| Msg.focusId HtmlDefs.idInput )
-                    ++
-                    HtmlDefs.onRendered (always <| Do <| HtmlDefs.select HtmlDefs.idInput )
+                    ] ++ [class [HtmlDefs.renderedClass]] ++
+                    [HtmlDefs.onRendered (always RenderedTextInput)]
                     ) []                                        
-             |> Drawing.html foregroundZ pos (100,16)
+             |> Drawing.htmlAnchor key foregroundZ pos (100,16) True ""
 
-activityToColor : Activity -> Drawing.Color
-activityToColor a =
-   case a of
-     MainActive -> Drawing.red 
-     WeakActive -> Drawing.blue
-     _ -> Drawing.black
 
 activityToClasses : Activity -> List String
 activityToClasses a =
@@ -140,31 +144,66 @@ activityToClasses a =
      WeakActive -> ["weak-active-label"]
      _ -> []
 
-nodeLabelDrawing : Config -> List (Drawing.Attribute Msg) -> Node NodeDrawingLabel -> Drawing Msg
-nodeLabelDrawing cfg attrs node =
+activityToEdgeClasses : Activity -> List String
+activityToEdgeClasses a =
+   case a of
+     MainActive -> ["active-edge"] 
+     WeakActive -> ["weak-active-edge"]
+     _ -> []
+
+nodeDrawing : Config -> Node NodeDrawingLabel -> Drawing Msg
+nodeDrawing cfg node =
     let n = node.label in    
     let id = node.id in
-    let color = activityToColor node.label.isActive in
     (
      if n.editable then
-         make_input n.inputPos n.label (NodeLabelEdit id)
+         make_input (idToKey id) n.inputPos n.label (NodeLabelEdit id)
      else
-         if n.label == "" then
-             (Drawing.circle (Drawing.zindexAttr foregroundZ :: Drawing.color color :: attrs ) n.pos 5)
-         else 
-            let label = cfg.latexPreamble ++ "\n" ++ if n.isMath then n.label else "\\text{" ++ n.label ++ "}" in
-            Drawing.htmlAnchor foregroundZ n.pos n.dims True {- n.isMath -}            
-            <| HtmlDefs.makeLatex
-            ([   MouseEvents.onClick (NodeClick id),
-                 MouseEvents.onDoubleClick (EltDoubleClick id)
-                 -- Html.Events.on "mousemove" (D.succeed (EltHover id))
-            ] ++ 
-            (activityToClasses n.isActive |> List.map Html.Attributes.class)
-           -- ++ (if n.isMath then [] else  [Html.Attributes.class "text-node"])
-            ++
-            HtmlDefs.onRendered (Msg.NodeRendered id)
-            )
-             label
+        let attrs = ([   MouseEvents.onClick (NodeClick id),
+                    MouseEvents.onDoubleClick (EltDoubleClick id)
+                    -- Html.Events.on "mousemove" (D.succeed (EltHover id))
+                ] 
+                ++ [HtmlDefs.renderedClass :: activityToClasses n.isActive |> class]
+                ++ HtmlDefs.dimsAttribute n.dims
+                ++
+                [HtmlDefs.onRendered (Msg.NodeRendered id)]
+                )
+        in
+        --  if n.label == "" then
+            --  (Drawing.circle (Drawing.zindexAttr foregroundZ :: Drawing.color color :: attrs ) n.pos 5)
+        --  else 
+            case Verbatim.extractVerbatim n.label of 
+              Just vLabel -> 
+                    Drawing.makeVerbatim
+                    {
+                        zindex = n.zindex,
+                        label = vLabel,
+                        -- preamble = cfg.latexPreamble,
+                        pos = n.pos,
+                        dims = n.dims,
+                        angle = 0,
+                        scale = 1,
+                        key = idToKey id
+                    } attrs
+              Nothing -> 
+                let label = (if n.isValidated then "\\color{green}" else "")
+                        ++ (if n.label == "" then "\\bullet" else
+                        -- let vLabel = verbatimLabel n.isVerbatim n.label in
+                        if n.isMath then n.label else "\\text{" ++ n.label ++ "}" )
+                in
+                -- makeLatex cfg n.pos id n.dims label n.zindex
+                Drawing.makeLatex 
+                {
+                    zindex = n.zindex,
+                    label = label,
+                    preamble = cfg.latexPreamble,
+                    pos = n.pos,
+                    dims = n.dims,
+                    angle = 0,
+                    scale = 1,
+                    key = idToKey id
+                } attrs
+                
                 
 
              {- Drawing.fromString 
@@ -178,23 +217,18 @@ nodeLabelDrawing cfg attrs node =
              
         ) 
 
-nodeDrawing : Config -> Node NodeDrawingLabel -> Drawing Msg
-nodeDrawing cfg n =
-  {-  let watch = if n.label.watchEnterLeave then
-        [Drawing.onMouseEnter (NodeEnter n.id),
-         Drawing.onMouseLeave (NodeLeave n.id) ]
-         else []
-   in  -}
-    nodeLabelDrawing cfg
-    [Drawing.onClick (NodeClick n.id)]
-    
-    n
         
 
 
-segmentLabel : Config -> QuadraticBezier -> Graph.EdgeId -> Activity -> NormalEdgeDrawingLabel -> Float -> Drawing Msg
-segmentLabel cfg q edgeId activity label curve =
-    let offset = 10 + (if ArrowStyle.isDouble label.style then ArrowStyle.doubleSize else 0) in
+segmentLabel : Config -> QuadraticBezier -> Graph.EdgeId -> Activity -> NormalEdgeDrawingLabel -> MarkerStyle -> Float -> Drawing Msg
+segmentLabel cfg q edgeId activity label marker curve =
+    let offset = 
+          if ArrowStyle.isDouble label.style then 2 * ArrowStyle.doubleSize else
+          if ArrowStyle.isMarker marker then 5 else
+          0
+    in
+      
+    let edge_width = 2 + offset in
     let labelpos =              
               -- Quiver algorithm, following redraw_label
               -- https://github.com/varkor/quiver/blob/2c62d40b820cadc3c7f9d0816a33121f389b6240/src/arrow.js#L1219
@@ -204,7 +238,7 @@ segmentLabel cfg q edgeId activity label curve =
                Geometry.determine_label_position
                  length
                  angle
-                 2 -- edge_width
+                 edge_width -- edge_width
                  0 -- start
                  1 -- end
                  (curve * length)
@@ -226,27 +260,77 @@ segmentLabel cfg q edgeId activity label curve =
       
     in
         if label.editable then
-             make_input labelpos label.label
+             make_input (idToKey edgeId) labelpos label.label
              (EdgeLabelEdit edgeId)
         else
          if  label.label == "" then
              Drawing.empty
          else 
-            Drawing.html foregroundZ labelpos label.dims -- n.dims
-            <| HtmlDefs.makeLatex
-            ([   MouseEvents.onClick (EdgeClick edgeId),
-                 MouseEvents.onDoubleClick (EltDoubleClick edgeId),
-                 MouseEvents.onMove  (always (MouseOn edgeId))
-                -- Html.Events.onMouseOver (EltHover edgeId)
-            ] ++ 
-            (activityToClasses activity |> List.map Html.Attributes.class)        
-             ++
-             HtmlDefs.onRendered (Msg.EdgeRendered edgeId)
-            )
-            <| cfg.latexPreamble ++ "\n" ++ label.label
+             let finalLabel = label.label in --  " \\scriptstyle " ++ label.label in
+             let angle =
+                  if label.style.labelAlignment == Geometry.Over then
+                   Point.pointToAngle <| Point.subtract q.to q.from 
+                  else 0
+             in
+             let attrs =    [   MouseEvents.onClick (EdgeClick edgeId),
+                      MouseEvents.onDoubleClick (EltDoubleClick edgeId),
+                      MouseEvents.onMove  (always (MouseOn edgeId))
+                    , HtmlDefs.renderedClass :: activityToClasses activity |> class                    
+                    , HtmlDefs.onRendered (Msg.EdgeRendered edgeId)]
+                    ++ HtmlDefs.dimsAttribute -- label.dims
+                    (Point.resize (1 / GraphDefs.edgeScaleFactor) label.dims)
+                    
+             in
+                          -- makeLatex cfg labelpos edgeId label.dims finalLabel foregroundZ
+             case Verbatim.extractVerbatim finalLabel of 
+              Just vLabel -> 
+                    Drawing.makeVerbatim
+                       {
+                        zindex = foregroundZ,
+                        label = vLabel,
+                        -- preamble = cfg.latexPreamble,
+                        pos = labelpos,
+                        dims = label.dims,
+                        angle = angle,
+                        scale = GraphDefs.edgeScaleFactor,
+                        key = idToKey edgeId
+                    } attrs
+              Nothing ->
+                    Drawing.makeLatex 
+                    {
+                        zindex = foregroundZ,
+                        label = finalLabel,
+                        preamble = cfg.latexPreamble,
+                        pos = labelpos,
+                        dims = label.dims,
+                        angle = angle,
+                        scale = GraphDefs.edgeScaleFactor,
+                        key = idToKey edgeId
+                    } attrs  -- -}          
+          
+            
             {- Drawing.fromString [Drawing.onClick (EdgeClick edgeId)]
               labelpos label.label  -}
-         
+
+
+{-
+adjunctionArrow : Graph.EdgeId -> List String -> Int -> NormalEdgeDrawingLabel -> QuadraticBezier -> Drawing Msg
+adjunctionArrow id classes z label q =
+   let p = Bez.middle q in 
+   let angle = Point.pointToAngle <| Point.subtract q.to q.from in
+   let attrs = [ Html.Attributes.style "transform"
+                   ("rotate(" ++ String.fromFloat angle ++ "rad)"),
+                 MouseEvents.onClick (EdgeClick id),
+                 MouseEvents.onDoubleClick (EltDoubleClick id)
+                 -- Html.Events.on "mousemove" (D.succeed (EltHover id))
+            ] ++ (List.map Html.Attributes.class classes)
+   in
+   makeLatex {latexPreamble = ""} 
+        p (12,24) "⊢" z attrs
+-}
+
+idToKey : Graph.Id -> Maybe String
+idToKey = String.fromInt >> Just
 
 normalEdgeDrawing : Config -> Graph.EdgeId 
 -- -> Geometry.PosDims -> Geometry.PosDims
@@ -254,52 +338,106 @@ normalEdgeDrawing : Config -> Graph.EdgeId
      -> Int
      -> NormalEdgeDrawingLabel -> QuadraticBezier -> Float -> Drawing Msg
 normalEdgeDrawing cfg edgeId activity z {- from to -} label q curve =
-    let c = activityToColor activity in
-    
-    
+    let style = ArrowStyle.getStyle label in
+    let classes =  
+         if label.isAdjunction then 
+            activityToClasses activity 
+         else
+            activityToEdgeClasses activity 
+    in
     -- let q = Geometry.segmentRectBent from to 
     --          label.style.bend
     -- in
-    Drawing.group [
-         Drawing.arrow 
-          [Drawing.zindexAttr z, Drawing.color c,
-           Drawing.onClick (EdgeClick edgeId),
-           Drawing.onDoubleClick (EltDoubleClick edgeId),
+    let attrs = (class classes ::
+            [
+          onClick (EdgeClick edgeId),
+          onDoubleClick (EltDoubleClick edgeId),
           -- Drawing.onHover (EltHover edgeId),
-           Drawing.simpleOn "mousemove" (MouseOn edgeId)
+           simpleOn "mousemove" (MouseOn edgeId)
           ] 
-          label.style
-         q, 
-          segmentLabel cfg q edgeId activity label curve]
+          )
+    in
+    -- if label.isAdjunction then
+    --     adjunctionArrow edgeId classes z label q
+    --     -- makeLatex {latexPreamble = ""} 
+    --     --     pos dims label z attrs
+    --     -- Drawing.adjunctionArrow attrs style q
+    -- else
+        Drawing.group [
+         Drawing.arrow {zindex = z, style = style, bezier = q}
+          attrs,
+          segmentLabel cfg q edgeId activity label style.marker curve,
+          drawMarker style.color style.marker q]
 
 {- type alias DrawingDims msg =
     { drawing : Drawing msg
     , posDims : Geometry.PosDims    
     } -}
+drawMarker : Color -> MarkerStyle -> QuadraticBezier -> Drawing Msg
+drawMarker color marker q =
+   if marker == "" then Drawing.empty else drawStringMarker color marker q
+  -- case marker of
+  --   NoMarker -> Drawing.empty
+  --   BulletMarker -> drawStringMarker color "\\bullet" q
+  --   BarMarker -> drawStringMarker color "|" q
 
--- draw a pullback or a pushout, depending on whehter the sources 
--- or the targets are equal
-drawPullshout : Graph.EdgeId -> Activity -> (Point, Point) -> (Point, Point) -> Drawing Msg
-drawPullshout edgeId a (x1, x2) (y1, y2) =
-     let shift = 30 in
-     let (p1, p2) = if x1 == y1 then (x1, x2) else (x2, x1)
-         (q1, q2) = if x1 == y1 then (y1, y2) else (y2, y1)
-     in
-     let smallshift = 5 in
+drawStringMarker : Color -> String -> QuadraticBezier -> Drawing Msg
+drawStringMarker color marker q =
+    let pos = Bez.middle q in
+    let angle = Point.pointToAngle <| Point.subtract q.to q.from in
+             
+             Drawing.makeLatex 
+             {
+                zindex = foregroundZ,
+                label = marker,
+                preamble = "\\color{" ++ Color.toString color ++ "}",
+                pos = pos,
+                dims = (12,18),
+                angle = angle,
+                scale = GraphDefs.edgeScaleFactor,
+                key = Nothing
+             } 
+             []   
 
-     let r1 = Point.towards p1 p2 shift
-         r2 = Point.towards q1 q2 shift
-     in
-     let extrem = Point.diamondPave r1 p1 r2 in
-     let s1 = Point.towards r1 extrem smallshift
-         s2 = Point.towards r2 extrem smallshift
-     in
-     let blackline = Drawing.line 
-               [Drawing.color <| activityToColor a,
-                Drawing.onClick (EdgeClick edgeId)]
-     in
-     Drawing.group 
-     [blackline s1 extrem, blackline extrem s2] 
+
+type alias Extrem =
+ { bez : QuadraticBezier,
+   fromId : Id,
+   toId : Id,
+   fromPos : Point,
+   toPos : Point}
+
+
+onClick : (MouseEvents.Event -> a) -> Html.Attribute a --  String.Html.Attribute a
+onClick = MouseEvents.onClick -- >> ghostAttribute
+
+simpleOn : String -> a -> Html.Attribute a
+simpleOn event = Json.Decode.succeed >> Html.Events.on event -- >> ghostAttribute
+
+
+onDoubleClick : (MouseEvents.Event -> a) -> Html.Attribute a
+onDoubleClick = MouseEvents.onDoubleClick -- >> ghostAttribute
+
+-- Html.Attributes.class doesn't work
+-- as it creates a property, not an attribute
+-- and svg does not support the class attribute
+class : List String -> Html.Attribute a
+class = Html.Attributes.attribute "class" << String.join " "
+
+
+
+
+drawHat : Graph.EdgeId -> Activity -> Int -> {color: Color.Color} -> Hat -> Drawing Msg
+drawHat edgeId a z {color} hat =
+    let classes = class <| activityToEdgeClasses a in
+    Drawing.polyLine 
+                {zindex = z, color = color
+                , points = [hat.p1, hat.summit, hat.p2] }
+               [classes, onClick (EdgeClick edgeId) 
+                 ]
+
+    --  Drawing.group 
+    --  [mk_pbk [class <| (Drawing.shadowClass :: classes)], mk_pbk [class classes]] 
 
 {-
 
@@ -310,45 +448,26 @@ Fin
 graphDrawing : Config -> Graph NodeDrawingLabel EdgeDrawingLabel -> Drawing Msg
 graphDrawing cfg g0 =
      
-      let padding = 5 in
-      let drawEdge id n1 n2 e = 
-             case e.details of
-               PullshoutEdge -> { drawing = 
-                                   Maybe.map2 (drawPullshout id e.isActive) n1.extrems n2.extrems
-                                   |> Maybe.withDefault Drawing.empty
-                               , posDims = { pos = (0, 0), dims = (0, 0)}
-                               , extrems = Just (n1.posDims.pos, n2.posDims.pos)
-                               }
-               NormalEdge l ->
-                   let q = Geometry.segmentRectBent n1.posDims n2.posDims l.style.bend in
-                       { drawing = normalEdgeDrawing cfg id e.isActive e.zindex l q l.style.bend,                     
-                        -- TODO
-                         posDims = {
-                             pos = Bez.middle q,
-                             dims = (padding, padding) |> Point.resize 4
-
-                         },
-                         extrems = Just (n1.posDims.pos, n2.posDims.pos)
-                       }
+      let drawEdge id e = 
+             case (e.details, e.shape) of
+               (PullshoutEdge pullshoutStyle, HatShape hat) -> 
+                                drawHat id e.isActive e.zindex pullshoutStyle hat
+                              
+               (NormalEdge l, Bezier q) ->
+                  
+                        normalEdgeDrawing cfg id e.isActive e.zindex l q l.style.bend
+                  
+               _ -> Drawing.empty
+               
       in
-      let g = Graph.mapRecAll     
-              identity identity      
-              (\id n -> { drawing = nodeDrawing cfg (Node id n), 
-                      extrems = Nothing,
-                      posDims = {
-                      dims = 
-                      
-                      if n.editable then (0, 0) else
-                      -- copied from source code of Collage                         
-                         n.dims, 
-                      pos = n.pos
-                      } |> Geometry.pad padding
-                       } )
+      let g = Graph.map     
+              -- identity identity      
+              (\id n -> nodeDrawing cfg (Node id n))
                drawEdge
               g0 
       in
-      let nodes = Graph.nodes g |> List.map (.label >> .drawing)
-          edges = Graph.edges g |> List.map (.label >> .drawing)
+      let nodes = Graph.nodes g |> List.map .label
+          edges = Graph.edges g |> List.map .label
       in
       let
           drawings = nodes ++ edges
