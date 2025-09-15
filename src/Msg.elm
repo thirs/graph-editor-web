@@ -136,7 +136,6 @@ type Msg
   | Marker String
   | Save
   | MakeSave
-  | ExportQuiver
     -- on reception of this message, the js function onMouseMove is called
     -- which sends back a MouseMove message with the relative position to 
     -- the canvas
@@ -162,7 +161,7 @@ type Msg
   -- a graph is pasted
   | PasteGraph GraphInfo
   | QuickInput String
-  | SetFirstTabEquation String
+  | SetFirstTabEquation {statement : String, isVerbatim : Bool}
   | NodeRendered NodeId Point
   | EdgeRendered EdgeId Point
   | MouseOn Graph.Id
@@ -171,7 +170,6 @@ type Msg
   | RulerMargin Int
   | ToggleHideGrid
   | ToggleHideRuler
-  | ToggleAlternativeLatex
   | ToggleAutosave
   | SaveRulerGridSize
   | OptimalGridSize
@@ -190,7 +188,7 @@ type Msg
   | LatexPreambleSwitch
   | LatexPreambleEdit String
   | SimpleMsg String
-  | AppliedProof { statement : String, script : String}
+  | AppliedProof { statement : String, script : String, isVerbatim : Bool}
   | ProtocolReceive (List {isSender : Bool, msg : ProtocolMsg})
   | ProtocolRequestSnapshot
   | RenderedTextInput

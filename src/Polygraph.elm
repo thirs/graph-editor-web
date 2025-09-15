@@ -14,7 +14,7 @@ module Polygraph exposing (Graph, Id, EdgeId, NodeId, empty, allIds, nodeIds,
      modifCodec, mapModifCodec,
      Modif, ModifJS, ModifHelper, finaliseModif, newModif, MergeFunctions
      , md_newNode, md_newEdge, md_update, md_map, 
-     md_updateEdge, md_updateNode, md_updateNodes, md_updateEdgesId, applyModifHelper,
+     md_updateEdge, md_updateEdges, md_updateNode, md_updateNodes, md_updateEdgesId, applyModifHelper,
      md_makeCylinder, md_makeCone, debugModifHelperGraph,
      translateId,TranslationId,applyModifTrans, defaultTranslation
      , {- findInitial, sourceNode, -} removeLoops,
@@ -359,7 +359,7 @@ mapRecAux cn ce fn fe dict ids =
          NodeObj n -> cn n
          EdgeObj _ _ e -> ce e
    in
-   let rec = mapRecAux cn ce fn fe in
+   -- let rec = mapRecAux cn ce fn fe in
    let ins id o = IntDict.insert id o dict in
     case ids of
        [] -> dict
@@ -367,26 +367,32 @@ mapRecAux cn ce fn fe dict ids =
                    
          case IntDict.get id dict of           
             Just (Input (NodeObj n)) ->
-                  rec 
+                  -- rec 
+                  mapRecAux cn ce fn fe
                       (ins id (Output <| NodeObj <| fn id n)) 
                       tailIds                         
             Just (Input (EdgeObj i1 i2 e)) ->
-                  rec (ins id <| Waiting i1 i2 e) (i1 :: i2 :: id :: tailIds)
+                  -- rec 
+                  mapRecAux cn ce fn fe
+                     (ins id <| Waiting i1 i2 e) (i1 :: i2 :: id :: tailIds)
             Just (Waiting i1 i2 e) ->
                   case (IntDict.get i1 dict, IntDict.get i2 dict) of                  
                      (Just (Output o1), Just (Output o2)) ->
                         let a1 = getA o1
                             a2 = getA o2
                         in
-                        rec
+                        -- rec
+                        mapRecAux cn ce fn fe
                            (ins id 
                                (Output <| EdgeObj i1 i2 <| 
                                        fe id a1 a2 e) 
                                 ) 
                                tailIds
-                     _ ->  rec dict tailIds
+                     _ ->  
+                     --rec 
+                         mapRecAux cn ce fn fe dict tailIds
                    
-            _ -> rec dict tailIds
+            _ -> mapRecAux cn ce fn fe dict tailIds
 
 -- edges whose source or target do not exist anymore.
 invalidEdges : Graph n e -> List (Edge e)
@@ -1227,6 +1233,18 @@ md_updateEdge : EdgeId -> (e -> e) -> ModifHelper n e -> ModifHelper n e
 md_updateEdge i fe =
   md_graphMap <| update i identity (\ { label, edit } -> { label = fe label, edit = updateStatus edit })
 
+-- check that the edges are indeed modified
+md_updateEdges : List (Edge e) -> Graph n e -> ModifHelper n e
+md_updateEdges es graph =
+   let compare edge modif = 
+         case getEdge edge.id graph of
+            Nothing -> modif
+            Just edgeOriginal -> 
+               if edge == edgeOriginal then modif else 
+               md_updateEdge edge.id (always edge.label)
+               modif
+   in
+   List.foldl compare (newModif graph) es
 
    {-
    case getNode i (md_base m) of

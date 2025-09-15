@@ -44,7 +44,6 @@ import Html.Events
 import Maybe.Extra as Maybe
 import IntDict
 import Unification
-import Tikz
 
 import Parser exposing ((|.), (|=), Parser)
 import Set
@@ -70,13 +69,14 @@ import Modes.Pullshout
 import Modes.CutHead
 import Modes.Move
 import Modes.Rename
-import Modes.Color
+import Modes.Customize
 import Drawing.Color as Color
 import Modes exposing (Mode(..), SelectState, MoveDirection(..), isResizeMode, ResizeState, EnlargeState)
 
 import ArrowStyle
 
-import HtmlDefs exposing (Key(..), computeLayout)
+-- import HtmlDefs exposing (Key(..), computeLayout)
+import HtmlDefs exposing (Key(..)) --, computeLayout)
 import GraphDefs exposing (NodeLabel, EdgeLabel)
 import GraphDefs exposing (newNodeLabel, MaybeProofDiagram(..), coqProofTexCommand, MaybeChain(..))
 -- import Tikz exposing (graphToTikz)
@@ -108,7 +108,6 @@ import Format.LastVersion as LastFormat
 import Format.GraphInfo as GraphInfo exposing (Tab)
 
 import List.Extra
-import GraphDefs exposing (exportQuiver)
 import GraphProof
 import GraphDrawing
 import String.Svg
@@ -141,7 +140,6 @@ port quicksaveGraph : { info : JsGraphInfo, export: ExportFormats, autosave : Bo
 port saveGraph : {info: JsGraphInfo, export: ExportFormats} -> Cmd a
 port makeSave : (() -> a) -> Sub a
 
-port exportQuiver : JE.Value -> Cmd a
 port alert : String -> Cmd a
 
 
@@ -205,7 +203,7 @@ port clipboardWriteLatex : {graph: JsGraphInfo, tex:String} -> Cmd a
 port requestProof : { statement : String, script : String} -> Cmd a
 
 port applyProof : { statement : String, script : String} -> Cmd a
-port appliedProof : ({ statement : String, script : String} -> a) -> Sub a
+port appliedProof : ({ statement : String, script : String, isVerbatim : Bool} -> a) -> Sub a
 
 -- port toClipboard : { content:String, success: String, failure: String } -> Cmd a
 port generateProofJs : { proof : String, graph : JsGraphInfo } -> Cmd a
@@ -220,7 +218,7 @@ port findReplace : ({ search: String, replace:String} -> a) -> Sub a
 port promptEquation : () -> Cmd a
 -- return the equation
 port promptedEquation : (String -> a) -> Sub a
-port setFirstTabEquation : (String -> a) -> Sub a
+port setFirstTabEquation : ({ statement :String, isVerbatim : Bool} -> a) -> Sub a
 
 -- ask js to prompt tab title
 port promptTabTitle : String -> Cmd a
@@ -416,13 +414,10 @@ graphToTikz model graph =
        -- return the text
       textNodesToLatex nodes
     else
-    if model.alternativeLatex then 
-      let d = toDrawing model 
+     let d = toDrawing model 
             <| GraphDrawing.toDrawingGraph graph
-      in
-      Drawing.tikz d
-    else 
-      Tikz.graphToTikz model.defaultGridSize graph
+     in
+     Drawing.tikz d
 
 makeExports : Model -> ExportFormats
 makeExports model = 
@@ -434,9 +429,9 @@ makeExports model =
 
 -- TODO change the name
 -- the suffix perform is to make the difference with the port name
-setFirstTabEquationPerform : Model -> String -> (Model, Cmd Msg)
+setFirstTabEquationPerform : Model -> { statement : String, isVerbatim : Bool} -> (Model, Cmd Msg)
 setFirstTabEquationPerform m s = 
-   case Parser.run equalityParser s of
+   case Parser.run equalityParser s.statement of
      Err _  -> noCmd m
      Ok chain -> 
         let mUpdated =
@@ -444,10 +439,11 @@ setFirstTabEquationPerform m s =
               \ t -> 
               { t | graph = 
                  Graph.applyModifHelper <| 
-                 graphDrawingChain t.sizeGrid Graph.empty chain
+                 graphDrawingChain t.sizeGrid s.isVerbatim Graph.empty chain
               }
         in 
-        ({ mUpdated | mode = DefaultMode}, computeLayout())
+        noCmd { mUpdated | mode = DefaultMode}
+        -- ({ mUpdated | mode = DefaultMode}, computeLayout())
 
 {-
 handleCommand : {isSender : Bool, msg : ProtocolMsg} -> Model -> (Model, Cmd Msg)
@@ -556,7 +552,8 @@ update msg modeli =
                 updateActiveGraph model 
                 GraphDefs.clearDims
         in
-        ({newModel | mode = MakeSaveMode}, computeLayout())
+        noCmd {newModel | mode = MakeSaveMode}
+        -- ({newModel | mode = MakeSaveMode}, computeLayout())
      Save -> save model
      RulerMargin rulerMargin -> noCmd {model | rulerMargin = rulerMargin}
      SaveRulerGridSize -> ({model | defaultGridSize = sizeGrid } , 
@@ -574,11 +571,7 @@ update msg modeli =
          --  (iniModel, Task.attempt (always Msg.noyarn comOp) (Dom.focus HtmlDefs.canvasId))
      ToggleHideGrid -> noCmd {model | hideGrid = not model.hideGrid}     
      ToggleHideRuler -> noCmd {model | rulerShow = not model.rulerShow}  
-     ToggleAlternativeLatex -> noCmd {model | alternativeLatex = not model.alternativeLatex}
      ToggleAutosave -> noCmd {model | autoSave = not model.autoSave}     
-     ExportQuiver -> (model,  
-                    exportQuiver <| 
-                     GraphDefs.exportQuiver sizeGrid (GraphDefs.selectedGraph modelGraph))
      MouseMoveRaw v _ -> (model, onMouseMove v)
      NodeRendered n (x,y) ->
                 -- let _ = Debug.log "nouvelle dims !" (n, dims) in
@@ -600,9 +593,16 @@ update msg modeli =
                      noCmd { modelf | scenario = SimpleScenario, statusMsg = s }
      SetFirstTab g ->
          let tab = GraphInfo.getActiveTab g in
-        (updateFirstTab model <| \t ->
-                  { tab | title = t.title },
-                 computeLayout ())
+         let newModel = 
+               updateFirstTab model <| \t ->
+                  { tab | title = t.title }
+         in
+          if model.graphInfo.latexPreamble == g.latexPreamble then
+            noCmd newModel
+            -- (newModel, computeLayout ())
+          else
+               updateModif newModel
+                <| GraphInfo.LatexPreamble g.latexPreamble
      Loaded {scenario, graph} ->
         (model, protocolSendMsg 
             <| LoadProtocol {graph = graph, scenario = 
@@ -629,7 +629,7 @@ update msg modeli =
         SplitArrow state -> Modes.SplitArrow.update state msg model
         CutHead state -> Modes.CutHead.update state msg model
         ResizeMode s -> update_Resize s msg model
-        ColorMode ids -> Modes.Color.update ids msg model -- update_Color ids msg model
+        CustomizeMode ids -> Modes.Customize.update ids msg model -- update_Color ids msg model
         LatexPreamble s -> update_LatexPreamble s msg model
 
 update_LatexPreamble : String -> Msg -> Model -> (Model, Cmd Msg)
@@ -746,13 +746,14 @@ generateProofString debug g =
 
 graphQuickInput : Model -> QuickInput.Equation -> Graph.ModifHelper NodeLabel EdgeLabel
 graphQuickInput model (eq1, eq2) = 
+  let isVerbatim = False in
   let modelGraph = getActiveGraph model in
   let sizeGrid = getActiveSizeGrid model in
   -- if an incomplete subdiagram is selected, we use it
   let od = GraphDefs.selectedIncompleteDiagram modelGraph in
-  let default = graphDrawingChain sizeGrid modelGraph (eq1, eq2) in 
+  let default = graphDrawingChain sizeGrid isVerbatim modelGraph (eq1, eq2) in 
   let split l edges = GraphProof.isEmptyBranch l |> 
-          Maybe.map (QuickInput.splitWithChain modelGraph (Graph.newModif modelGraph) edges) 
+          Maybe.map (QuickInput.splitWithChain isVerbatim modelGraph (Graph.newModif modelGraph) edges) 
   in
   case od of
     Nothing -> default
@@ -940,7 +941,7 @@ s                  (GraphDefs.clearSelection modelGraph) } -}
         KeyChanged False k (Character 'c') -> 
             if k.ctrl then noCmd model -- we don't want to interfer with the copy event C-c
             else
-            noCmd <| Modes.Color.initialise model
+            noCmd <| Modes.Customize.initialise model
                 -- , 
                 --   graph = GraphDefs.clearSelection 
                 --   <| GraphDefs.clearWeakSelection modelGraph }              
@@ -976,13 +977,13 @@ s                  (GraphDefs.clearSelection modelGraph) } -}
                                               script = proof }
                in
                  (model, cmd)
-        AppliedProof {statement, script} ->
+        AppliedProof {statement, script, isVerbatim} ->
           let failWith s = (model, alert s) in
           let registerProof graph diagram = 
                 case Parser.run equalityParser statement of
                   Err _ -> failWith ("fail to parse " ++ statement)
                   Ok eqs ->
-                    case Unification.unifyDiagram eqs diagram graph of
+                    case Unification.unifyDiagram isVerbatim eqs diagram graph of
                       Err s -> failWith s
                       Ok finalg ->                
                           updateModifHelper model finalg
@@ -1366,7 +1367,7 @@ graphDrawingFromModel m =
     let modelGraph = getActiveGraph m in
     case m.mode of
         MakeSaveMode -> collageGraphFromGraph m modelGraph 
-        ColorMode _ -> collageGraphFromGraph m modelGraph
+        CustomizeMode s -> Modes.Customize.graphDrawing m s
         DefaultMode -> collageGraphFromGraph m modelGraph
         RectSelect {orig} -> GraphDrawing.toDrawingGraph  <| selectGraph m orig m.specialKeys.shift
         EnlargeMode p ->
@@ -1415,13 +1416,13 @@ graphResize st m =
    
 
 
-graphDrawingChain : Int -> Graph NodeLabel EdgeLabel -> QuickInput.Equation -> Graph.ModifHelper NodeLabel EdgeLabel
-graphDrawingChain offset g eq =         
+graphDrawingChain : Int -> Bool -> Graph NodeLabel EdgeLabel -> QuickInput.Equation -> Graph.ModifHelper NodeLabel EdgeLabel
+graphDrawingChain offset isVerbatim g eq =         
             let mid = toFloat offset / 2 in
             let iniP = (mid, mid) in
             {- graphDrawingEquation -}
-            QuickInput.graphEquation iniP (toFloat offset) 
-               eq g  -- QuickInput.Right
+            QuickInput.graphEquation iniP (toFloat offset) isVerbatim
+                  eq g  -- QuickInput.Right
 
 
 
@@ -1523,7 +1524,7 @@ helpMsg model =
                 ++ ", new li[n]e"  
                 ++ ", [/] split arrow" 
                 ++ ", [C]ut head of selected arrow" 
-                ++ ", [c]olor arrow" 
+                ++ ", [c]ustomise arrow (color, shift)" 
                 ++ ", if an arrow is selected: [\""
                 ++ ArrowStyle.controlChars
                 ++ "\"] alternate between different arrow styles, "
@@ -1588,7 +1589,7 @@ helpMsg model =
         PullshoutMode _ -> "Mode Pullback/Pullshout. "
                           -- ++ Debug.toString model 
                            ++  Modes.Pullshout.help |> msg
-        ColorMode s -> Modes.Color.help s |> msg 
+        CustomizeMode s -> Modes.Customize.help s |> msg 
         SquareMode _ -> "Mode Commutative square. "
                              ++ Modes.Square.help |> msg
         SplitArrow _ -> "Mode Split Arrow. "
@@ -1782,9 +1783,7 @@ viewGraph model =
            --  , Html.button [Html.Events.onClick FindInitial] [Html.text "Initial"]
            , HtmlDefs.checkbox ToggleHideGrid "Show grid" "" (not model.hideGrid)           
            , HtmlDefs.checkbox ToggleHideRuler "Show ruler" "" model.rulerShow           
-           , HtmlDefs.checkbox ToggleAlternativeLatex "Legacy latex generation" "The legacy latex generation relies on Tikz to compute the exact position of edges" (not model.alternativeLatex)
            , HtmlDefs.checkbox ToggleAutosave "Autosave" "Quicksave every minute" (model.autoSave)
-           , Html.button [Html.Events.onClick ExportQuiver] [Html.text "Export selection to quiver"] 
            , Html.button [Html.Events.onClick SaveRulerGridSize] [Html.text "Save ruler & grid size preferences"] 
            , Html.button [Html.Events.onClick OptimalGridSize, 
               Html.Attributes.title "Select two nodes. The new grid size is the max of the coordinate differences."] 

@@ -1,8 +1,9 @@
 port module HtmlDefs exposing (onRendered, idInput, canvasId,
    Key(..), Keys, keyDecoder, keysDecoder, makeLatex, checkbox, slider
    , preventsDefaultOnKeyDown,
-   computeLayout, select, introHtml, overlayHelpMsg
-   , focusPosition, renderedClass)
+   --computeLayout, 
+   select, introHtml, overlayHelpMsg
+   , focusPosition, renderedClass, dimsAttribute)
 import Html
 import Html.Attributes
 import Html.Events
@@ -13,7 +14,7 @@ import Html.Parser.Util
 
 
 port focusPosition : Point -> Cmd a
-port computeLayout : () -> Cmd a
+-- port computeLayout : () -> Cmd a
 port select : String -> Cmd a
 
 
@@ -33,7 +34,7 @@ introHtml = (textHtml <| """
             A vi-inspired diagram editor, with              
             (latex) labelled nodes and edges, tested with Chrome (doesn't work properly in Safari), written in <a href="https://elm-lang.org/">Elm</a> (see the code on 
         <a href="https://github.com/amblafont/graph-editor-web">github</a>).
-            Multiple collaboration is supported (check the <a href="https://github.com/amblafont/graph-editor-web/blob/master/README.md">README</a>).
+            Collaborative editing is supported (check the <a href="https://github.com/amblafont/graph-editor-web/blob/master/README.md">README</a>).
 	    For a short description, see <a href="https://hal.science/hal-04407118v1">here</a>.
         For a video demonstrating the mechanisation features, see <a href="https://github.com/amblafont/vscode-yade-example/releases/download/v0.1/demo-yade-example.mp4">here</a>.
 	    </p>
@@ -153,6 +154,12 @@ slider msg name min max value =
           Html.Events.onInput (String.toInt >> Maybe.withDefault value >> msg) ] []
         , Html.text name
         ]
+
+dimsAttribute : (Float, Float) -> List (Html.Attribute a)
+dimsAttribute (width, height) = 
+    [ Html.Attributes.attribute "data-width" (String.fromFloat width),
+      Html.Attributes.attribute "data-height" (String.fromFloat height)
+    ]
 
 overlayHelpMsg : String
 overlayHelpMsg = "[?] to toggle help overlay"

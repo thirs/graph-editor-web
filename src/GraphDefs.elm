@@ -1,11 +1,11 @@
 module GraphDefs exposing (defaultPullshoutShift, EdgeLabel, NodeLabel, allDimsReady,clearDims,
    NormalEdgeLabel, PullshoutEdgeLabel, EdgeType(..), GenericEdge, edgeToNodeLabel, getEdgeColor,
-   newEdgeLabelAdj, selectIds, setColorEdgesId,
+   newEdgeLabelAdj, selectIds, setColor, -- setColorEdgesId,
    filterLabelNormal, filterEdgeNormal, isNormalId, isNormal, isPullshout,
    filterNormalEdges, coqProofTexCommand,
-   newNodeLabel, newEdgeLabel, newPullshout, emptyEdge,
+   newNodeLabel, newEdgeLabel, newEdgeLabelVerbatimAdj, newPullshout, emptyEdge,
    selectedEdges, mapNormalEdge,  mapDetails, 
-   createNodeLabel, md_createNodeLabel, createProofNode, createProofNodeLabel,
+   createNodeLabel, md_createNodeLabel, md_createNodeLabelVerbatim, createProofNode, createProofNodeLabel,
    getNodeLabelOrCreate, getNodeDims, getNodePos, getEdgeDims,
    addNodesSelection, selectAll, clearSelection, 
    clearWeakSelection,
@@ -16,7 +16,7 @@ module GraphDefs exposing (defaultPullshoutShift, EdgeLabel, NodeLabel, allDimsR
    selectedEdge,
    selectedEdgeId, selectedNode, selectedId,selectedIds,
    removeSelected, getLabelLabel, getProofNodes,
-   getNodesAt, snapToGrid, snapNodeToGrid, exportQuiver,
+   getNodesAt, snapToGrid, snapNodeToGrid,
    addOrSetSel, toProofGraph, selectedIncompleteDiagram,
    selectSurroundingDiagram,
    centerOfNodes, --mergeWithSameLoc,
@@ -41,7 +41,7 @@ import EdgeShape exposing (EdgeShape(..), pullshoutHat)
 import ArrowStyle exposing (ArrowStyle, EdgePart)
 import Polygraph as Graph exposing (Graph, NodeId, EdgeId, Node, Edge)
 import GraphProof exposing (LoopNode, LoopEdge, Diagram)
-
+import Verbatim exposing (makeVerbatimLabel)
 import Json.Encode as JEncode
 import List.Extra as List
 import Maybe.Extra as Maybe
@@ -331,20 +331,44 @@ md_updatePullshoutEdge id f =
      (mapPullshoutEdge f)
 
 
+-- edgesToModif : List (Edge EdgeLabel) -> Graph NodeLabel EdgeLabel -> Graph.ModifHelper NodeLabel EdgeLabel
+-- edgesToModif edges graph =
+--    -- we compare
+--    let compare edge = 
+--          case Graph.getEdge edge.id graph of
+--             Nothing -> Nothing
+--             Just edgeOriginal -> 
+--                if edge == edgeOriginal then Nothing else 
+--                Just edge 
+--    in
+--    let modifEdges = List.filterMap edges in 
 
-setColorEdgesId : Color.Color -> EdgePart -> List EdgeId -> Graph NodeLabel EdgeLabel -> 
-           Graph.ModifHelper NodeLabel EdgeLabel
-setColorEdgesId color part edges graph =
-     let updateColor e = 
-           case e.details of
-            NormalEdge l -> 
-               let oldStyle = l.style in
-               let newStyle = ArrowStyle.updateEdgeColor part color oldStyle in
-               { e | details = NormalEdge { l | style = newStyle }}
-            PullshoutEdge x -> {e | details = PullshoutEdge { x | color = color}} 
-     in
-     let modif = Graph.newModif graph in
-      Graph.md_updateEdgesId edges updateColor modif 
+
+
+setColor : Color.Color -> EdgePart -> EdgeLabel -> EdgeLabel
+setColor color part e = 
+   case e.details of
+   NormalEdge l -> 
+      let oldStyle = l.style in
+      let newStyle = ArrowStyle.updateEdgeColor part color oldStyle in
+      { e | details = NormalEdge { l | style = newStyle }}
+   PullshoutEdge x -> {e | details = PullshoutEdge { x | color = color}} 
+
+
+
+-- setColorEdgesId : Color.Color -> EdgePart -> List EdgeId -> Graph NodeLabel EdgeLabel -> 
+--            Graph.ModifHelper NodeLabel EdgeLabel
+-- setColorEdgesId color part edges graph =
+--      let updateColor e = 
+--            case e.details of
+--             NormalEdge l -> 
+--                let oldStyle = l.style in
+--                let newStyle = ArrowStyle.updateEdgeColor part color oldStyle in
+--                { e | details = NormalEdge { l | style = newStyle }}
+--             PullshoutEdge x -> {e | details = PullshoutEdge { x | color = color}} 
+--      in
+--      let modif = Graph.newModif graph in
+--       Graph.md_updateEdgesId edges updateColor modif 
      
 
 updatePullshoutEdges : (PullshoutEdgeLabel -> Maybe PullshoutEdgeLabel) 
@@ -396,30 +420,6 @@ updateStyleEdges update edges g =
       newGraph
 
 
-exportQuiver : Int -> Graph NodeLabel EdgeLabel -> JEncode.Value
-exportQuiver sizeGrid g =
-  let gnorm = g |> keepNormalEdges |> Graph.normalise in
-  let nodes = Graph.nodes gnorm
-      edges = Graph.edges gnorm
-  in
-  let coordInt x = floor (x / toFloat sizeGrid) |> JEncode.int in
-  let encodePos (x, y) = [coordInt x, coordInt y] in
-  let encodeNode n = JEncode.list identity <| encodePos n.label.pos ++ 
-            [ JEncode.string (if n.label.label == "" then "\\bullet" else n.label.label)] in
-  let encodeEdge e = JEncode.list identity <| 
-               [JEncode.int e.from
-               , JEncode.int e.to
-               , JEncode.string e.label.details.label
-               , JEncode.int (if e.label.details.style.labelAlignment == Right then 2 else 0) -- alignment
-               , JEncode.object <| ArrowStyle.quiverStyle e.label.details.style
-                  -- [("level", if e.label.style.double then JEncode.int 2 else JEncode.int 1)] --options
-                ] in
-  let jnodes = nodes |> List.map encodeNode
-      jedges = edges |> List.map encodeEdge
-  in
-  JEncode.list identity <|
-  [JEncode.int 0, JEncode.int <| List.length nodes] ++ jnodes ++ jedges
-
 newNodeLabel : Point -> String -> Bool -> Int -> NodeLabel
 newNodeLabel p s isMath zindex = 
     { pos = p , label = s, dims = Nothing, selected = False, weaklySelected = False,
@@ -439,9 +439,17 @@ newGenericLabel d = { details = d,
                       weaklySelected = False,
                       zindex = defaultZ}
 
+
+
+newEdgeLabelVerbatimAdj : Bool -> Bool -> String -> ArrowStyle -> EdgeLabel
+newEdgeLabelVerbatimAdj isVerbatim isAdjunction s style = 
+   newGenericLabel 
+    <| NormalEdge 
+    { label = makeVerbatimLabel isVerbatim s, style = style, dims = Nothing, isAdjunction = isAdjunction}
+
 newEdgeLabelAdj : String -> ArrowStyle -> Bool -> EdgeLabel
-newEdgeLabelAdj s style isAdjunction = newGenericLabel 
-    <| NormalEdge { label = s, style = style, dims = Nothing, isAdjunction = isAdjunction }
+newEdgeLabelAdj s style isAdjunction = 
+   newEdgeLabelVerbatimAdj False isAdjunction s style
 
 
 newEdgeLabel : String -> ArrowStyle -> EdgeLabel
@@ -464,8 +472,14 @@ createNodeLabel g s p =
 
 md_createNodeLabel : Graph.ModifHelper NodeLabel EdgeLabel -> String -> Point -> (Graph.ModifHelper NodeLabel EdgeLabel,
                                                                        NodeId, Point)
-md_createNodeLabel g s p =
-    let label = newNodeLabel p s True defaultZ in
+md_createNodeLabel =
+   md_createNodeLabelVerbatim False
+
+md_createNodeLabelVerbatim : Bool -> Graph.ModifHelper NodeLabel EdgeLabel -> 
+            String -> Point -> (Graph.ModifHelper NodeLabel EdgeLabel,
+                                                                       NodeId, Point)
+md_createNodeLabelVerbatim isVerbatim g s p =
+    let label = newNodeLabel p (makeVerbatimLabel isVerbatim s) True defaultZ in
     let (g2, id) = Graph.md_newNode g label in
      (g2, id, p)
 
@@ -714,15 +728,17 @@ posGraph : Graph NodeLabel EdgeLabel ->
          {label : EdgeLabel, shape : EdgeShape, pos : Point}
 posGraph g = 
       let padding = 5 in
+      let dummyBez =  {from = (0, 0), to = (2,2), controlPoint = (1,1)} in
       -- ca c'est utile pour calculer les coordonnes du symbole de pullback
       let dummyExtrem = { fromId = 0,
            fromPos = (0,0), toPos = (2,2),
-           bez = {from = (0, 0), to = (2,2), controlPoint = (1,1)}} in
+           bez = dummyBez} in
       let dummyAcc id pos = {
                       id = id,
                       posDims = 
                          { pos = pos, dims = (0, 0)},
-                      extrems = dummyExtrem
+                      extrems = dummyExtrem,
+                      isArrow = False
                       }
       in
       let computeEdge id n1 n2 e = 
@@ -734,15 +750,29 @@ posGraph g =
                   acc = dummyAcc id h.summit,                     
                   shape = HatShape h }
                NormalEdge l ->
-                   let q = Geometry.segmentRectBent n1.posDims n2.posDims l.style.bend in
+                  --  let dims = (padding, padding) |> Point.resize 4 in
+                   let computePosDims isSource = 
+                        let (n, part) = 
+                                 if isSource then (n1, ArrowStyle.TailPart)
+                                 else (n2, ArrowStyle.HeadPart)
+                        in
+                        if not n.isArrow then n.posDims else
+                        let oldPosDims = n.posDims in
+                        { oldPosDims | 
+                          pos = Bez.point n.extrems.bez <| 
+                           ArrowStyle.shiftRatioFromPart l.style part
+                        }
+                   in
+                   let q = Geometry.segmentRectBent (computePosDims True) (computePosDims False) l.style.bend in
                    {label = e, 
                     shape = Bezier q,
                     acc = {
                      id = id,
+                     isArrow = True,
                      posDims = 
                          {
                              pos = Bez.middle q,
-                             dims = (padding, padding) |> Point.resize 4
+                             dims = (padding, padding) |> Point.resize 4 
                          },
                      extrems = { fromId = n1.id, 
                                  bez = q,
@@ -760,7 +790,8 @@ posGraph g =
               (\id n -> { 
                       label = n,
                       acc = {
-                        id = id,                        
+                        id = id,
+                        isArrow = False,                        
                         extrems = dummyExtrem,
                         posDims = {
                            dims =                       
