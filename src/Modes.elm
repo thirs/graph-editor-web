@@ -6,7 +6,7 @@ import Polygraph as Graph exposing (EdgeId, NodeId)
 import InputPosition exposing (InputPosition)
 import GraphDefs exposing (NodeLabel, EdgeLabel)
 import Format.GraphInfo as GraphInfo exposing (TabId)
-import Msg exposing (ModifId, MoveMode)
+import Msg exposing (ModifId, MoveMode, ModeReturn(..))
 import Drawing.Color as Color
 
 
@@ -16,16 +16,10 @@ type Mode
     | NewArrow NewArrowState
     | NewLine NewLineState
     | Move MoveState
-      -- the list of ids to be edited, with associated default labels 
-      -- (which may differ from the labels of the objects in the model)
-      -- the boolean specifies whether we need to save the state at the
-      -- end
     | RenameMode RenameState
     | DebugMode
     | SquareMode SquareState
     | RectSelect SelectState
-    -- Bool -- keep previous selection?
-      -- | SplitArrow EdgeId
     | SplitArrow SplitArrowState
     {-
     We should enlarge vertices below right the origin
@@ -33,30 +27,42 @@ type Mode
     -}
     | EnlargeMode EnlargeState
     | CutHead CutHeadState
-    | ResizeMode ResizeState -- current sizegrid
+    | ResizeMode ResizeState
     | PullshoutMode PullshoutState
     | CustomizeMode CustomizeModeState
+    | BendMode BendState
     | MakeSaveMode
     | LatexPreamble String
+type alias BendState =
+  { edge : Graph.Edge EdgeLabel
+  , captureState : CaptureState
+  }
+
+-- only the bend component is going to change
+type alias BendComponentState = 
+    { captureState : CaptureState, origBend : Float }
+type alias CaptureState = {direction : Point, value : Float, 
+     bounds : Maybe (Float, Float)}
 
 toString : Mode -> String
 toString m = case m of
-    DefaultMode -> "Default"
-    NewArrow _ -> "New arrow"
-    NewLine _ -> "New line"
-    Move _ -> "Move"
-    RenameMode _ -> "Rename"
-    DebugMode -> "Debug"
-    LatexPreamble _ -> "Latex preamble"
-    SquareMode _ -> "Square"
-    RectSelect _ -> "Rect select"
-    SplitArrow _ -> "Split arrow"
-    EnlargeMode _ -> "Enlarge"
-    CutHead _ -> "Cut head"
-    ResizeMode _ -> "Resize"
-    PullshoutMode _ -> "Pullshout"
-    CustomizeMode _ -> "Color"
-    MakeSaveMode -> "MakeSave"
+  DefaultMode -> "Default"
+  NewArrow _ -> "New arrow"
+  NewLine _ -> "New line"
+  Move _ -> "Move"
+  RenameMode _ -> "Rename"
+  DebugMode -> "Debug"
+  LatexPreamble _ -> "Latex preamble"
+  SquareMode _ -> "Square"
+  RectSelect _ -> "Rect select"
+  SplitArrow _ -> "Split arrow"
+  EnlargeMode _ -> "Enlarge"
+  CutHead _ -> "Cut head"
+  ResizeMode _ -> "Resize"
+  PullshoutMode _ -> "Pullshout"
+  CustomizeMode _ -> "Color"
+  BendMode _ -> "Bend"
+  MakeSaveMode -> "MakeSave"
 
 type alias CutHeadState = { edge: Graph.Edge EdgeLabel
     , head : Bool -- the head or the tail?
@@ -141,23 +147,40 @@ type ArrowStateKind =
 
 type alias CustomizeModeState = 
    { edges: (List (Graph.Edge EdgeLabel)),
-      mode : EdgePart
+      mode : CustomizeMode
       -- the style of the singleton edge being selected
       -- we can change its bend/shift
       -- style : Maybe ArrowStyle
     }
 
+    -- { captureState : CaptureState, origShift : Float }
+type alias CustomizeModeShiftState =
+    { part : ArrowStyle.ExtremePart
+    , componentState : CaptureState
+    -- , edge : Graph.Edge EdgeLabel
+    }
+type CustomizeMode =
+    CustomizeModePart EdgePart
+                       -- true if source, false if target
+  | CustomizeModeShift CustomizeModeShiftState
+  
 
 type alias NewLineState = {
     initialPos : Point,
     bend : Float
     }
 
+type NewArrowMode = 
+    NewArrowPart ArrowStyle.ExtremePart
+  | NewArrowMain 
+  | NewArrowBend CaptureState
+  | NewArrowShift ArrowStyle.ExtremePart CaptureState
+
 type alias NewArrowState =
     { chosen : Graph.Graph NodeLabel EdgeLabel,
       kind : ArrowStateKind, 
-      mode : EdgePart,
-      style : ArrowStyle, 
+      mode : NewArrowMode,
+      style : ArrowStyle,
       pos : InputPosition, inverted : Bool,
       isAdjunction : Bool,
       merge : Bool

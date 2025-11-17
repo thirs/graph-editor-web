@@ -9,9 +9,9 @@ module ArrowStyle exposing (ArrowStyle, empty, {- keyUpdateStyle, -}
     increaseBend, decreaseBend,
     keyMaybeUpdateColor, isPartColorable, TailStyle(..), HeadStyle(..), ArrowKind(..),
     -- keyMaybeUpdateHeadColor, keyMaybeUpdateTailColor,
-    makeHeadShape, shiftRatioFromPart, keyUpdateShiftBend,
-    makeTailShape, getStyle, isNone, simpleLineStyle, shiftHelpMsg
-    , invert)
+    makeHeadShape, shiftRatioFromPart, -- keyUpdateShiftBend,
+    makeTailShape, getStyle, isNone, simpleLineStyle, ExtremePart(..)
+    , invert, updateShift)
 
 import HtmlDefs exposing (Key(..))
 
@@ -38,9 +38,9 @@ type alias Style = { tail : TailStyle,
                      labelAlignment : LabelAlignment,
                      -- betweeon 0 and 1, 0.5 by default
                      labelPosition : Float,
-                     -- between -5 and 5, 0 by defualt
-                     shiftSource : Int,
-                     shiftTarget : Int,
+                     -- between 0 and 1, 0.5 by defualt
+                     shiftSource : Float,
+                     shiftTarget : Float,
                      color : Color,
                      headColor : Color,
                      tailColor : Color,
@@ -48,25 +48,34 @@ type alias Style = { tail : TailStyle,
                      wavy : Bool
                     } 
 
-maxShift = 5
+-- maxShift = 5
 -- minShift = -5   
 
-shiftRatio : Int -> Float 
-shiftRatio s = 0.5 + toFloat s / (2 * maxShift)
+-- shiftRatio : Int -> Float 
+-- shiftRatio s = 0.5 + toFloat s / (2 * maxShift)
 
-shiftRatioFromPart : Style -> EdgePart -> Float
+type ExtremePart = Head | Tail 
+
+shiftRatioFromPart : Style -> ExtremePart -> Float
 shiftRatioFromPart s part = 
   case part of 
-    HeadPart -> shiftRatio s.shiftTarget
-    TailPart -> shiftRatio s.shiftSource
+    Head -> s.shiftTarget
+    Tail -> s.shiftSource
     -- should not occur
-    MainEdgePart -> 0.5
+    -- MainEdgePart -> 0.5
+
+updateShift : {part : ExtremePart, shift : Float} -> Style -> Style
+updateShift {part, shift} s =
+    if part == Tail then
+       { s | shiftSource = shift }
+    else
+       { s | shiftTarget = shift }
 
 simpleLineStyle : Float -> Style
 simpleLineStyle bend = { tail = DefaultTail, head = NoHead, kind = NormalArrow, dashed = False,
           bend = bend, labelAlignment = Left, marker = noMarker,
           labelPosition = 0.5, color = Color.black,
-          shiftSource = 0, shiftTarget = 0,
+          shiftSource = 0.5, shiftTarget = 0.5,
           headColor = Color.black, tailColor = Color.black, wavy = False }
 type alias ArrowStyle = Style
 type ArrowKind = NormalArrow | NoneArrow | DoubleArrow
@@ -152,7 +161,7 @@ empty : Style
 empty = { tail = DefaultTail, head = DefaultHead, dashed = False,
           bend = 0, labelAlignment = Left,
           labelPosition = 0.5, color = Color.black, kind = NormalArrow,
-          marker = noMarker, shiftSource = 0, shiftTarget = 0,
+          marker = noMarker, shiftSource = 0.5, shiftTarget = 0.5,
           headColor = Color.black, tailColor = Color.black ,
           wavy = False }
 isDouble : Style -> Basics.Bool
@@ -217,7 +226,7 @@ toggleDashed s = { s | dashed = not s.dashed }
 
 
 -- chars used to control in keyUpdateStyle
-controlChars = "|>(=-~bBA]["
+controlChars = "|>(=-~A]["
 maxLabelPosition = 0.9
 minLabelPosition = 0.1
 
@@ -238,8 +247,8 @@ keyMaybeUpdateStyle k style =
         Character '-' -> Just <| toggleDashed style
         Character '~' -> Just <| toggleWavy style
         -- Character '.' -> Just <| toggleMarker style
-        Character 'b' -> Just <| {style | bend = decreaseBend style.bend |> norm0}
-        Character 'B' -> Just <| {style | bend = increaseBend style.bend |> norm0}
+        -- Character 'b' -> Just <| {style | bend = decreaseBend style.bend |> norm0}
+        -- Character 'B' -> Just <| {style | bend = increaseBend style.bend |> norm0}
         Character 'A' -> Just <| toggleLabelAlignement style
         Character ']' -> if style.labelPosition + epsilon >= maxLabelPosition then Nothing else
                Just {style | labelPosition = style.labelPosition + 0.1 |> min maxLabelPosition}
@@ -264,37 +273,35 @@ keyMaybeUpdateColor k p s =
   keyToNewColor (getEdgeColor p s) k 
   |> Maybe.map (\ c -> updateEdgeColor p c s)
 
-keyUpdateShiftBend : Key -> Style -> Maybe Style
-keyUpdateShiftBend k s =
+-- keyUpdateShiftBend : Key -> Style -> Maybe Style
+-- keyUpdateShiftBend k s =
   
-  let updatePart isHead amount =
-        let updateInRange old =
-              max (0 - maxShift) <| min maxShift <| old + amount
-        in
-          Just <| 
-          if isHead then
-             { s | shiftTarget = updateInRange s.shiftTarget }
-          else
-            { s | shiftSource = updateInRange s.shiftSource }
-  in
-  case k of 
-    Character 'E' -> updatePart True 1
-    Character 'e' -> updatePart True (-1)
-    Character 'S' -> updatePart False 1
-    Character 's' -> updatePart False (-1)
-    Character 'b' -> Just  {s | bend = decreaseBend s.bend |> norm0}
-    Character 'B' -> Just {s | bend = increaseBend s.bend |> norm0}    
-    _ -> Nothing
+--   let updatePart isHead amount =
+--         let updateInRange old =
+--               max 0 <| min 1 <| old + amount
+--         in
+--           Just <| 
+--           if isHead then
+--              { s | shiftTarget = updateInRange s.shiftTarget }
+--           else
+--             { s | shiftSource = updateInRange s.shiftSource }
+--   in
+--   case k of 
+--     Character 'E' -> updatePart True 0.1
+--     Character 'e' -> updatePart True (-0.1)
+--     Character 'S' -> updatePart False 0.1
+--     Character 's' -> updatePart False (-0.1)
+--     Character 'b' -> Just  {s | bend = decreaseBend s.bend |> norm0}
+--     Character 'B' -> Just {s | bend = increaseBend s.bend |> norm0}    
+--     _ -> Nothing
 
-shiftHelpMsg : String
-shiftHelpMsg = "shift [Ss]ource/targ[Ee]t"
 
-isPartColorable : EdgePart -> Style -> Bool
+isPartColorable : ExtremePart -> Style -> Bool
 isPartColorable part s = 
   case part of
-    HeadPart -> s.head /= NoHead
-    TailPart -> s.tail /= DefaultTail
-    MainEdgePart -> True
+    Head -> s.head /= NoHead
+    Tail -> s.tail /= DefaultTail
+    -- MainEdgePart -> True
 
 
    

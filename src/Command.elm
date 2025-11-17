@@ -22,6 +22,7 @@ import Modes.CutHead
 import Modes.SplitArrow
 import Modes.Pullshout
 import Modes.Square
+import Modes.Bend
 import CommandCodec exposing (protocolSendMsg)
 import HtmlDefs -- exposing (computeLayout)
 import Maybe.Extra
@@ -48,10 +49,10 @@ fixModel modeli =
         else 
           (modeli, False)
    in
-   let defaultModel = { model | mode = DefaultMode } in
+   let defaultModel = setMode DefaultMode model in
    let ifTabChanged m = if changedTab then defaultModel else m () in
    let defaultIfTabChanged = ifTabChanged (always model) in
-   case model.mode of
+   case currentMode model of
       MakeSaveMode -> model
       DefaultMode -> model
       DebugMode -> model
@@ -59,6 +60,7 @@ fixModel modeli =
       ResizeMode _ -> defaultIfTabChanged 
       EnlargeMode _ -> defaultIfTabChanged
       NewLine state -> defaultIfTabChanged
+      BendMode state -> Modes.Bend.fixModel model state
       NewArrow state -> 
          ifTabChanged <| \ _ -> Modes.NewArrow.fixModel model state
       Move _ -> if changedTab || not (Modes.Move.isValid model) then 
@@ -121,7 +123,7 @@ applyCommands arg model =
    in
    let (finalModel2, cmd2) =
          (
-         if finalModel.mode /= DefaultMode then noCmd finalModel else
+         if currentMode finalModel /= DefaultMode then noCmd finalModel else
          case ret.focus of
            Nothing -> noCmd finalModel
            Just {tabId, pos, selIds} -> 
@@ -129,14 +131,14 @@ applyCommands arg model =
               Nothing -> noCmd finalModel
               Just newModel -> 
                 let model2 = 
-                        updateActiveGraph  { newModel | mode = DefaultMode }
+                        updateActiveGraph  (setMode DefaultMode newModel)
                       (GraphDefs.selectIds selIds)
                 in
                 (model2, HtmlDefs.focusPosition pos)
          )
       
    in 
-  (finalModel2, Cmd.batch <| 
+  (fixModel finalModel2, Cmd.batch <| 
      [cmd,  cmd2] -- :: (if ret.computeLayout then [computeLayout ()] else [])
     
      
@@ -165,8 +167,8 @@ applyCommand {isSender, msg} model =
                        focus = Nothing, undo = NoUndo } 
    in
    case msg of
-     Snapshot g -> returnComputeLayout <| fixModel <| setGraphInfo model g
-     ModifProtocol m -> returnComputeLayout <| fixModel <| applyModifProtocol isSender m model
+     Snapshot g -> returnComputeLayout <| setGraphInfo model g
+     ModifProtocol m -> returnComputeLayout <| applyModifProtocol isSender m model
      Undo modifs ->
           case  Modif.fold GraphInfo.applyModifSimple model.graphInfo modifs of
            Just r -> { model = { model | graphInfo = r.next},
@@ -186,10 +188,9 @@ applyCommand {isSender, msg} model =
               latexPreamble = or preamble gi.latexPreamble }
          } 
      LoadProtocol {graph, scenario} ->
-        let m =  clearHistory <| setGraphInfo { model | 
-                                              mode = DefaultMode, 
+        let m =  clearHistory <| setGraphInfo (setMode DefaultMode { model | 
                                               scenario = scenario
-                                            } graph 
+                                            }) graph 
         in
         let m2 =
                 if scenario /= Exercise1 then m else
@@ -217,7 +218,7 @@ applyModifProtocol isSender msg model =
              { model | graphInfo = result.next.graphInfo}
        in
        -- applyModifResult isSender model msg.id (Just result) in 
-       if model.mode /= DefaultMode || not isSender then nextModel else
+       if currentMode model /= DefaultMode || not isSender then nextModel else
        let idTranslator = result.next.idTranslator in
        let selModel = 
             updateTabs nextModel
