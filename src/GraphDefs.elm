@@ -22,28 +22,30 @@ module GraphDefs exposing (defaultPullshoutShift, EdgeLabel, NodeLabel, allDimsR
    centerOfNodes, --mergeWithSameLoc,
    findReplaceInSelected, {- closestUnnamed, -} unselect, closest,
    makeSelection, addWeaklySelected, weaklySelect, weaklySelectMany,
-   getSurroundingDiagrams, updateNormalEdge,
+   getSurroundingDiagrams, updateNormalEdge, md_updateNormalEdge,
    rectEnveloppe, updateStyleEdges, updatePullshoutEdges,
    getSelectedProofDiagram, MaybeProofDiagram(..), selectedChain, MaybeChain(..),
    createValidProofAtBarycenter, isProofLabel, makeProofString, posGraph
    ,invertEdges
    , edgeScaleFactor
    , keyMaybeUpdatePullshout
-   , getEdgeDirection, getEdgeDirectionFromId
+   , getEdgeDirection, getEdgeDirectionFromId, depsCodec, nextDepLabel, isDepEdge
    )
 
-import IntDict
+import IntDict exposing (IntDict)
+import IntDictExtra as IntDict
+import Codec
 import Drawing.Color as Color
 import Zindex exposing (defaultZ)
 import Geometry.Point as Point exposing (Point)
 import Geometry exposing (LabelAlignment(..))
 import Geometry.QuadraticBezier as Bez
+import Geometry.Curve as Curve exposing (Curve(..))
 import EdgeShape exposing (EdgeShape(..), pullshoutHat)
 import ArrowStyle exposing (ArrowStyle, EdgePart)
 import Polygraph as Graph exposing (Graph, NodeId, EdgeId, Node, Edge)
 import GraphProof exposing (LoopNode, LoopEdge, Diagram)
-import Verbatim exposing (makeVerbatimLabel)
-import Json.Encode as JEncode
+import SpecialLabels exposing (makeVerbatimLabel, SpecialLabel)
 import List.Extra as List
 import Maybe.Extra as Maybe
 import Geometry.Point
@@ -70,7 +72,9 @@ type alias NormalEdgeLabel =
   { label : String, style : ArrowStyle, dims : Maybe Point
   -- ArrowStyle.getStyle should be systematically applied to the style
   -- (TODO: remove this restriction)
-  , isAdjunction : Bool}
+  , isAdjunction : Bool
+--   , isDependency : Bool
+  }
 
 
 edgeScaleFactor : Float
@@ -272,7 +276,7 @@ toProofGraph =
     posGraph >>
     Graph.filterMap Just (
       \e -> case (filterLabelNormal e.label, e.shape) of 
-             (Just l, Bezier b) -> Just { details = l.details, bezier = b }
+             (Just l, ArrowShape (CurveBezier b))  -> Just { details = l.details, bezier = b }
              (_ , _) -> Nothing
       )
     >>
@@ -442,19 +446,31 @@ newGenericLabel d = { details = d,
 
 
 
-newEdgeLabelVerbatimAdj : Bool -> Bool -> String -> ArrowStyle -> EdgeLabel
-newEdgeLabelVerbatimAdj isVerbatim isAdjunction s style = 
+newEdgeLabelVerbatimStuff : {special : SpecialLabel, isAdjunction: Bool
+                             } -> String -> ArrowStyle 
+                             -> EdgeLabel
+newEdgeLabelVerbatimStuff {special, isAdjunction} s style =
    newGenericLabel 
     <| NormalEdge 
-    { label = makeVerbatimLabel isVerbatim s, style = style, dims = Nothing, isAdjunction = isAdjunction}
+    { label = SpecialLabels.makeSpecial special s, style = style, dims = Nothing, 
+     isAdjunction = isAdjunction }                          
 
-newEdgeLabelAdj : String -> ArrowStyle -> Bool -> EdgeLabel
-newEdgeLabelAdj s style isAdjunction = 
-   newEdgeLabelVerbatimAdj False isAdjunction s style
+newEdgeLabelVerbatimAdj : Bool -> Bool -> String -> ArrowStyle -> EdgeLabel
+newEdgeLabelVerbatimAdj isVerbatim isAdjunction = 
+   newEdgeLabelVerbatimStuff 
+      {special = if isVerbatim then SpecialLabels.Verbatim else SpecialLabels.Normal, 
+       isAdjunction = isAdjunction } 
+
+newEdgeLabelAdj : String -> ArrowStyle -> {isAdjunction : Bool, isDependency : Bool } -> EdgeLabel
+newEdgeLabelAdj s style {isAdjunction, isDependency} = 
+   newEdgeLabelVerbatimStuff { isAdjunction = isAdjunction,
+         special = if isDependency then SpecialLabels.Dependency else SpecialLabels.Normal
+         } s style
 
 
 newEdgeLabel : String -> ArrowStyle -> EdgeLabel
-newEdgeLabel s style = newEdgeLabelAdj s style False
+newEdgeLabel s style = newEdgeLabelAdj s style
+    {isAdjunction = False, isDependency = False}
 
 newPullshout : PullshoutEdgeLabel -> EdgeLabel
 newPullshout l = newGenericLabel <| PullshoutEdge l
@@ -729,11 +745,11 @@ posGraph : Graph NodeLabel EdgeLabel ->
          {label : EdgeLabel, shape : EdgeShape, pos : Point}
 posGraph g = 
       let padding = 5 in
-      let dummyBez =  {from = (0, 0), to = (2,2), controlPoint = (1,1)} in
+      let dummyCurve =  CurveBezier {from = (0, 0), to = (2,2), controlPoint = (1,1)} in
       -- ca c'est utile pour calculer les coordonnes du symbole de pullback
       let dummyExtrem = { fromId = 0,
            fromPos = (0,0), toPos = (2,2),
-           bez = dummyBez} in
+           curve = dummyCurve} in
       let dummyAcc id pos = {
                       id = id,
                       posDims = 
@@ -760,23 +776,54 @@ posGraph g =
                         if not n.isArrow then n.posDims else
                         let oldPosDims = n.posDims in
                         { oldPosDims | 
-                          pos = Bez.point n.extrems.bez <| 
+                          pos = Curve.point n.extrems.curve <| 
                            ArrowStyle.shiftRatioFromPart l.style part
                         }
                    in
-                   let q = Geometry.segmentRectBent (computePosDims True) (computePosDims False) l.style.bend in
+                   let isLoop = n1.id == n2.id in
+                  --  let (isLoop, q) = 
+                  --       if n1.id == n2.id then
+                  --           (True, Geometry.segmentRectBent (computePosDims True) (computePosDims False) l.style.bend)
+                  --       else
+                  --           (False, Geometry.segmentRectBent (computePosDims True) (computePosDims False) l.style.bend)
+                  --  in
+                   let curve = 
+                        if isLoop then
+                           let nodeCenter = (computePosDims True).pos
+                               radius = l.style.loopRadius
+                               angle = l.style.loopAngle
+                               center = Point.add nodeCenter (abs radius * cos angle, abs radius * sin angle)
+                               fromAngle = angle - 0.5
+                               toAngle = angle + 0.5
+                               (actualFromAngle, actualToAngle) = 
+                                    if radius < 0 then (toAngle, fromAngle) else (fromAngle, toAngle)
+                               p1 = Point.add nodeCenter (20 * cos actualFromAngle, 20 * sin actualFromAngle)
+                               p2 = Point.add nodeCenter (20 * cos actualToAngle, 20 * sin actualToAngle)
+                               apex = Point.add center (abs radius * cos angle, abs radius * sin angle)
+                               p1p2mid = Point.middle p1 p2
+                               controlPoint = Point.add apex (Point.subtract apex p1p2mid)
+                               --  fake loop bezier. Needs to be fixed if we plan to 
+                               -- support arrows between loops.
+                           in
+                           (CurveArc {from = p1, to = p2, r = radius, center = center })
+                              -- Point.add nodeCenter (Point.resize 20 (Point.subtract center nodeCenter)))
+                        else
+                           let q = Geometry.segmentRectBent (computePosDims True) (computePosDims False) l.style.bend in
+                           CurveBezier q
+                           -- (CurveBezier q, Bez.middle q)
+                   in
                    {label = e, 
-                    shape = Bezier q,
+                    shape = ArrowShape curve,
                     acc = {
                      id = id,
                      isArrow = True,
                      posDims = 
                          {
-                             pos = Bez.middle q,
+                             pos = Curve.middle curve,
                              dims = (padding, padding) |> Point.resize 4 
                          },
                      extrems = { fromId = n1.id, 
-                                 bez = q,
+                                 curve = curve,
                                  fromPos = n1.posDims.pos, 
                                  toPos = n2.posDims.pos
                                  -- controlPoint = q.controlPoint
@@ -922,4 +969,62 @@ getEdgeDirection g e =
       (_, Nothing) -> Nothing
       (Just from, Just to) -> Just <| Point.subtract to from
             -- if from == to then failedRet else
+
+
+isDepEdge : NormalEdgeLabel -> Bool
+isDepEdge = .label >> SpecialLabels.isDependency
+
+getDependencyName : NormalEdgeLabel -> String
+getDependencyName l = l.label |> SpecialLabels.removeSpecial SpecialLabels.Dependency
+
+dependencyEdges : Graph NodeLabel EdgeLabel -> List (Edge NormalEdgeLabel)
+dependencyEdges g =
+   Graph.edges g 
+            |> List.filterMap filterEdgeNormal 
+            |> List.map (Graph.edgeMap .details)
+            |> List.filter (.label >> isDepEdge)
+            
+
+
+dependencyDict : Graph NodeLabel EdgeLabel -> IntDict (List (String, Graph.Id))
+dependencyDict graph =
+  let depEdges = dependencyEdges graph in
+  List.foldl (\e -> IntDict.cons e.from (getDependencyName e.label, e.to)
+              ) IntDict.empty depEdges
+     
+
+depGraph : Graph.Graph NodeLabel EdgeLabel
+                   -> Graph.Graph {node : NodeLabel, deps : List (String, Graph.Id )} EdgeLabel
+depGraph =  (\ g -> 
+      let dict = dependencyDict g in 
+      Graph.map (\id n -> { node = n, deps = IntDict.getDictList id dict}) 
+         (always Basics.identity)
+         g
+    )
+
+getDepLabels : NodeId -> Graph.Graph NodeLabel EdgeLabel -> Maybe (List String)
+getDepLabels id graphi =
+
+   let graph = graphi |> depGraph in
+   case Graph.getNode id graph of
+         Nothing -> Nothing
+         Just { deps } -> List.map Tuple.first deps |> Just
+
+nextDepLabel : NodeId -> Graph.Graph NodeLabel EdgeLabel -> Maybe String
+nextDepLabel id graphi =
+   case getDepLabels id graphi of 
+      Nothing -> Nothing
+      Just l -> 
+         List.filterMap String.toInt l |> List.maximum |>
+         Maybe.map ((+) 1) |> Maybe.withDefault 0
+         |> String.fromInt |> Just
+
           
+depsCodec : Codec.Codec 
+                 
+                 (Graph.Graph NodeLabel EdgeLabel)
+                  (Graph.Graph {node : NodeLabel, deps : List (String, Graph.Id )} EdgeLabel) 
+depsCodec = 
+  Codec.build 
+    depGraph
+    (Graph.map (always .node) (always identity))

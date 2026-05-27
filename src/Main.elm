@@ -63,6 +63,7 @@ import Maybe exposing (withDefault)
 
 import Modes.Square
 import Modes.Bend
+import Modes.Loop
 import Modes.NewArrow 
 import Modes.NewLine
 import Modes.SplitArrow
@@ -106,6 +107,7 @@ import Format.Version15
 import Format.Version16
 import Format.Version17
 import Format.Version18
+import Format.Version19
 import Format.LastVersion as LastFormat
 
 import Format.GraphInfo as GraphInfo exposing (Tab)
@@ -127,7 +129,7 @@ import GraphDefs exposing (isPullshout)
 import Base64 exposing (toBytes)
 -- import Bytes exposing (Bytes)
 
--- port test : Bytes -> Cmd a
+-- port test : ({ a : Maybe Int} -> b) -> Sub b
 port preventDefault : JE.Value -> Cmd a
 port onKeyDownActive : (JE.Value -> a) -> Sub a
 
@@ -174,6 +176,7 @@ port loadedGraph15 : (LoadGraphInfo Format.Version15.Graph -> a) -> Sub a
 port loadedGraph16 : (LoadGraphInfo Format.Version16.Graph -> a) -> Sub a
 port loadedGraph17 : (LoadGraphInfo Format.Version17.Graph -> a) -> Sub a
 port loadedGraph18 : (LoadGraphInfo Format.Version18.Graph -> a) -> Sub a
+port loadedGraph19 : (LoadGraphInfo Format.Version19.Graph -> a) -> Sub a
 
 
 -- port setFirstTabGrph : ()
@@ -251,6 +254,7 @@ subscriptions m =
     Sub.batch 
      <|
     [
+      -- test (\ x -> let _ = Debug.log "recu" x in Msg.noOp),
       protocolReceive ProtocolReceive,
       protocolRequestSnapshot (always ProtocolRequestSnapshot),
       Modes.NewArrow.returnMarker Marker,
@@ -285,6 +289,7 @@ subscriptions m =
       loadedGraph16 (mapLoadGraphInfo Format.Version16.fromJSGraph >> loadGraphInfoToMsg),
       loadedGraph17 (mapLoadGraphInfo Format.Version17.fromJSGraph >> loadGraphInfoToMsg),
       loadedGraph18 (mapLoadGraphInfo Format.Version18.fromJSGraph >> loadGraphInfoToMsg),
+      loadedGraph19 (mapLoadGraphInfo Format.Version19.fromJSGraph >> loadGraphInfoToMsg),
       setFirstTabEquation SetFirstTabEquation,
       -- decodedGraph (LastFormat.fromJSGraph >> PasteGraph),
       E.onClick (D.succeed MouseClick),
@@ -405,6 +410,7 @@ computeFlags : Mode -> Model.CmdFlags
 computeFlags mode =
     case mode of
         BendMode state -> Modes.Bend.computeFlags state
+        -- LoopMode state -> Modes.Loop.computeFlags state
         NewArrow state -> Modes.NewArrow.computeFlags state
         CustomizeMode state -> Modes.Customize.computeFlags state
         _ -> { pointerLock = False }
@@ -622,6 +628,7 @@ update msg modeli =
          --  (iniModel, Task.attempt (always Msg.noyarn comOp) (Dom.focus HtmlDefs.canvasId))
      ToggleHideGrid -> noCmd {model | hideGrid = not model.hideGrid}     
      ToggleHideRuler -> noCmd {model | rulerShow = not model.rulerShow}  
+     ToggleShowDependency -> noCmd {model | showDependencies = not model.showDependencies}
      ToggleAutosave -> noCmd {model | autoSave = not model.autoSave}     
      MouseMoveRaw v _ -> (model, onMouseMove v)
      NodeRendered n (x,y) ->
@@ -682,6 +689,7 @@ update msg modeli =
         ResizeMode s -> update_Resize s msg model
         CustomizeMode ids -> Modes.Customize.update ids msg model
         BendMode state -> Modes.Bend.update state msg model
+        LoopMode state -> Modes.Loop.update state msg model
         LatexPreamble s -> update_LatexPreamble s msg model
 
 update_LatexPreamble : String -> Msg -> Model -> (Model, Cmd Msg)
@@ -1215,7 +1223,11 @@ s                  (GraphDefs.clearSelection modelGraph) } -}
                                 , selIds = selIds
                                 })
         KeyChanged False _ k ->
-           case (if k /= Character 'b' then Nothing else Modes.Bend.initialise model) of
+           case (if k /= Character 'b' then Nothing else 
+                 case Modes.Loop.initialise model of
+                   Just m -> Just m
+                   Nothing -> Modes.Bend.initialise model
+                ) of
              Just m -> noCmd m
         -- KeyChanged False _ (Character 'b') ->
              Nothing ->
@@ -1452,6 +1464,7 @@ graphDrawingFromModel m =
                 |> Graph.applyModifHelper
                 |> GraphDrawing.toDrawingGraph
     BendMode state -> Modes.Bend.graphDrawing m state
+    LoopMode state -> Modes.Loop.graphDrawing m state
     LatexPreamble _ -> collageGraphFromGraph m modelGraph
         
 
@@ -1592,6 +1605,7 @@ helpMsg model =
                 ++ ", if an arrow is selected: [\""
                 ++ ArrowStyle.controlChars
                 ++ "\"] alternate between different arrow styles, "
+                ++ "[b] bend arrow/reshape looping arrow, "
                 ++ "[.] customise arrow marker, "
                 ++  "[\"bB][\"] to customize the pullback/pushout sign, "
                 ++  "[i]nvert arrow, "
@@ -1761,13 +1775,15 @@ view m =
 
 toDrawing : Model -> Graph NodeDrawingLabel EdgeDrawingLabel -> Drawing Msg
 toDrawing model graph = 
-    let cfg = { latexPreamble = case model.scenario of
-                                   Exercise1 -> 
-                                       "\\newcommand{\\depthHistory}{"
-                                       ++ String.fromInt (List.length model.history)
-                                       ++ "}"                                       
-                                   _ -> model.graphInfo.latexPreamble 
-              } 
+    let cfg = 
+          {  showDependencies = model.showDependencies,
+             latexPreamble = case model.scenario of
+                                      Exercise1 -> 
+                                        "\\newcommand{\\depthHistory}{"
+                                        ++ String.fromInt (List.length model.history)
+                                        ++ "}"                                       
+                                      _ -> model.graphInfo.latexPreamble            
+          } 
     in
     graphDrawing cfg graph
 
@@ -1877,7 +1893,7 @@ viewGraph model =
                    Html.Attributes.title "Should not be necessary"
             ] [Html.text "Recompute labels"] -}
            --  , Html.button [Html.Events.onClick FindInitial] [Html.text "Initial"]
-           , HtmlDefs.checkbox ToggleHideGrid "Show grid" "" (not model.hideGrid)           
+           , HtmlDefs.checkbox ToggleHideGrid "Show grid" "" (not model.hideGrid)  
            , HtmlDefs.checkbox ToggleHideRuler "Show ruler" "" model.rulerShow           
            , HtmlDefs.checkbox ToggleAutosave "Autosave" "Quicksave every minute" (model.autoSave)
            , Html.button [Html.Events.onClick SaveRulerGridSize] [Html.text "Save ruler & grid size preferences"] 
@@ -1910,7 +1926,10 @@ viewGraph model =
                 Html.Events.onInput LatexPreambleEdit
                ] [ ]]
             _ ->
-              [ Html.button [Html.Events.onClick LatexPreambleSwitch] [Html.text "Edit latex preamble"],                
+              [ Html.button [Html.Events.onClick LatexPreambleSwitch] [Html.text "Edit latex preamble"],
+                HtmlDefs.checkbox ToggleShowDependency "Show dependencies" 
+                  "(Coreact feature) If false, only the dependency edges of the selected nodes are shown"
+                  (model.showDependencies),
                 Html.p [Html.Attributes.class "tabs"] (renderTabs model),          
                 Html.p [] [ Html.text <| if nmissings > 0 then 
                   String.fromInt nmissings ++ " nodes or edges could not be rendered."

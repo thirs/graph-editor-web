@@ -1,6 +1,7 @@
 port module Modes.NewArrow exposing (graphDrawing, fixModel, initialise, update, help, 
     requestMarkerDefault, returnMarker, computeFlags)
 
+import Modes.Loop
 import Modes.Capture exposing (UpdateResult(..))
 import GraphDrawing exposing (..)
 import Geometry.Point
@@ -102,14 +103,20 @@ initialise m =
             mode = NewArrowMain,
             inverted = False,
             isAdjunction = False,
+            -- isDependency = False,
             merge = False
             -- merge = False 
             }
-        
+
+isLoop : NewArrowState -> Bool
+isLoop state =
+    case state.kind of
+        CreateLoop _ -> True
+        _ -> False        
             
-nextStep : Model -> {finish:Bool, merge:Bool} -> NewArrowState -> ( Model, Cmd Msg )
-nextStep model {finish, merge} state =
-     let info = moveNodeInfo merge True model state in
+nextStep : Model -> {finish:Bool, merge:Bool, labelKind:LabelKind} -> NewArrowState -> ( Model, Cmd Msg )
+nextStep model {finish, merge, labelKind} state =
+     let info = moveNodeInfo merge labelKind model state in
      
      -- let m2 = addOrSetSel False info.movedNode { model | graph = info.graph } in
     --  let m2 = setSaveGraphWithGraph model info.graph
@@ -117,7 +124,8 @@ nextStep model {finish, merge} state =
     --                              <| GraphDefs.clearSelection g)
     --  in
      let modif = activeGraphModifHelper model.graphInfo info.graph in
-     let selIds = IntDict.insert model.graphInfo.activeTabId 
+     let selIds = if isLoop state then IntDict.empty else
+                  IntDict.insert model.graphInfo.activeTabId 
                     info.selectable IntDict.empty 
      in
     --  let m2 = updateActiveTab m (\ tab -> { tab | graph =
@@ -278,7 +286,10 @@ updateCapture state msg model =
 updateNormal : NewArrowState -> Msg -> Model -> ( Model, Cmd Msg )
 updateNormal state msg model =
     let modelGraph = getActiveGraph model in
-    let next finishMerge = nextStep model finishMerge state in
+    let nextOptions options = nextStep model options state in
+    let next {finish, merge} = 
+            nextOptions {finish = finish, merge = merge, labelKind = Empty} 
+    in
     let pullshoutMode k = 
            noCmd <|
            
@@ -313,11 +324,28 @@ updateNormal state msg model =
         KeyChanged False _ (Character '.') -> (model, requestMarkerDefault state.style.marker)
     --     TabInput -> Just <| ValidateNext
         KeyChanged False _ (Control "Tab") -> next {finish = False, merge = state.merge || state.isAdjunction}
+        KeyChanged False _ (Character '0') -> 
+            case state.kind of
+                CreateArrow id ->
+                    let posGraph = GraphDefs.posGraph modelGraph in
+                    case Graph.get id .pos .pos posGraph of
+                        Nothing -> noCmd model
+                        Just pos -> 
+                            noCmd <| updateState model 
+                            { state | kind = CreateLoop { id = id, pos = pos } }
+                -- CreateLoop id ->
+                --     noCmd <| updateState model { state | kind = CreateArrow id }
+                _ -> noCmd model
         KeyChanged False _ (Character 'a') -> next {finish = True, merge = True}
+        KeyChanged False _ (Character 'D') -> 
+            case nextDepLabel model state of
+                Nothing -> noCmd model
+                Just s -> nextOptions {finish = True, merge = True, labelKind = Dependency s}
         KeyChanged False _ (Character 'b') -> noCmd <| initialiseBendMode state model
         KeyChanged False _ (Character 's') -> noCmd <| initialiseShiftMode ArrowStyle.Tail state model
         KeyChanged False _ (Character 'e') -> noCmd <| initialiseShiftMode ArrowStyle.Head state model
         KeyChanged False _ (Character 'd') -> noCmd <| updateState model { state | isAdjunction = not state.isAdjunction}         
+        
         KeyChanged False _ (Character 'f') -> 
               noCmd <| updateState model { state | pos = truncateInputPosition model state.chosen }
         KeyChanged False _ (Character 'i') -> noCmd <| updateState model { state | inverted = not state.inverted}                 
@@ -363,6 +391,7 @@ nextPossibleKind s =
    case s.kind of
      CreateCone -> Nothing
      CreateCylinder -> Just CreateCone
+     CreateLoop _ -> Nothing
      CreateArrow _ -> 
         if List.isEmpty <| Graph.edges s.chosen then
             Nothing
@@ -370,28 +399,91 @@ nextPossibleKind s =
             Just CreateCylinder
 
 
-moveNodeInfo :
-    Bool
-    -> Bool
-    -> Model
-    -> NewArrowState
-    ->
-        { graph : Graph.ModifHelper NodeLabel EdgeLabel
+-- moveNodeInfoLoop :
+--     Bool
+--     -> Bool
+--     -> Model
+--     -> NewArrowState
+--     ->
+--         { graph : Graph.ModifHelper NodeLabel EdgeLabel
+--         , selectable : List Graph.Id
+--         , renamable : List Graph.Id
+--         , weaklySelection : Maybe Graph.Id
+--         }
+type alias Info = 
+       { graph : Graph.ModifHelper NodeLabel EdgeLabel
         , selectable : List Graph.Id
         , renamable : List Graph.Id
         , weaklySelection : Maybe Graph.Id
         }
-moveNodeInfo merge emptyLabel model state =
+    -- | LoopInfo { graph : Graph.ModifHelper NodeLabel EdgeLabel }
+
+nextDepLabel : Model -> NewArrowState -> Maybe String
+nextDepLabel model state =
+    case Graph.nodes state.chosen of
+        [] -> Nothing
+        _ :: _ :: _ -> Nothing
+        [ {id }] ->
+            let graph = getActiveGraph model in
+            GraphDefs.nextDepLabel id graph
+
+type LabelKind =
+      Dash 
+    | Empty
+    | Dependency String
+
+labelKindToString : LabelKind -> String
+labelKindToString kind =
+    case kind of
+        Dash -> "-"
+        Empty -> ""
+        Dependency s -> s 
+
+isDependency : LabelKind -> Bool
+isDependency k = case k of
+    Dependency _ -> True
+    _ -> False
+
+moveNodeInfo :
+    Bool
+    -> LabelKind
+    -> Model
+    -> NewArrowState
+    -> Info
+moveNodeInfo merge labelKind model state =
                 let modelGraph = getActiveGraph model in
-                let style = getStyle state in                       
-                let edgeLabel = GraphDefs.newEdgeLabelAdj 
-                              (if state.isAdjunction then "\\vdash" else 
-                                if emptyLabel then "" else "-") 
-                              style state.isAdjunction
+                let style = getStyle state in
+                -- let updateLoopStyle angle radius l =
+                --         let oldStyle = l.style in
+                --         { l | style = { oldStyle | loopAngle = angle, loopRadius = radius }} in
+                let edgeLabel = 
+                        GraphDefs.newEdgeLabelAdj 
+                                (if state.isAdjunction then "\\vdash" else 
+                                    labelKindToString labelKind) 
+                                style { isAdjunction = state.isAdjunction,
+                                        isDependency = isDependency labelKind }
                 in
                 let nodePos = GraphDefs.centerOfNodes (Graph.nodes state.chosen) in
                 let nodeLabel = GraphDefs.newNodeLabel nodePos "" True Zindex.defaultZ  in
                 let modifGraph = Graph.newModif modelGraph in
+                if isLoop state then
+                    let (id , pos) = 
+                            case state.kind of
+                                CreateLoop loop -> (loop.id, loop.pos)
+                                _ -> (0,(0,0)) -- impossible case because we tested for isLoop before
+                    in
+                    let newLabel = 
+                          GraphDefs.mapNormalEdge (\ l -> { l | style = Modes.Loop.updateLoopStyle model pos l.style }) edgeLabel 
+                    in
+
+                    let (m2, edgeId) = Graph.md_newEdge modifGraph id id newLabel in
+                     { graph = m2,
+                       weaklySelection = Nothing,
+                       selectable = [],
+                        renamable = [edgeId]
+                    } 
+
+                else
                 let extendedGraph = 
                      case state.kind of
                         CreateCylinder ->                        
@@ -400,6 +492,10 @@ moveNodeInfo merge emptyLabel model state =
                             Graph.md_makeCone modifGraph (Graph.nodeIds state.chosen) nodeLabel edgeLabel state.inverted
                         CreateArrow id ->
                             Graph.md_makeCone modifGraph [id] nodeLabel edgeLabel state.inverted        
+                        CreateLoop _ ->
+                            -- impossible case because we tested for isLoop before
+                            Graph.md_makeCone modifGraph [] nodeLabel edgeLabel state.inverted
+
                 in            
                 let moveInfo =
                         Modes.Move.mkGraph model
@@ -416,7 +512,7 @@ moveNodeInfo merge emptyLabel model state =
                 selectable = selectable,
                 renamable = (if moveInfo.merged then [] else selectable) ++ 
                             (if state.isAdjunction then [] else extendedGraph.edgeIds)
-                }
+                } 
 
 -- getTargetPos : NewArrowState -> Model -> Point
 -- getTargetPos state model = model.mousePos
@@ -433,7 +529,7 @@ getMerge state =
 
 graphDrawing : Model -> NewArrowState -> Graph NodeDrawingLabel EdgeDrawingLabel
 graphDrawing m s =
-     let info = moveNodeInfo (getMerge s) False m s in
+     let info = moveNodeInfo (getMerge s) Dash m s in
      
     -- let defaultView movedNode = modelGraph{ graph = modelGraph, movedNode = movedNode}  in
     -- graphMakeEditable (renamableFromState s) <|
@@ -450,6 +546,7 @@ help s =
             ++ "[hjkl] position the new point with the keyboard "
             ++ "([f] to move by a multiple of the grid size), "
             ++ "[ctrl] merge, [a] merge without renaming, toggle [m]erge preview, "
+            ++ "[0] switch to loop creation, "
              ++ "[RET] or space to terminate the arrow creation, "
              ++ "[\""
              ++ ArrowStyle.controlChars
@@ -460,6 +557,7 @@ help s =
              ++ "[.] customise the marker"
              ++ "[i]nvert arrow, "
              ++ "create a[d]junction arrow, "
+             ++ "create [D]ependency arrow, "
              ++ "[p]ullback/[P]ushout mode, "
              ++ "[C] switch to cone/cylinder creation (if relevant).\n"
              ++ "[p]ullback/[P]ushout mode.\n"
