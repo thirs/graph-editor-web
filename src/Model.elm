@@ -90,6 +90,8 @@ type alias Model = {
     , rulerShow : Bool
      -- when false, only the dependency edges of the selected nodes are shown
     , showDependencies : Bool
+    -- whether to update label colors when edge colors change
+    , labelColorUpdateEnabled : Bool
     
     }
 
@@ -290,18 +292,19 @@ clearModel m =
    createModel <| modelToFlag m
 
 modelToFlag : Model -> Flags
-modelToFlag m = {defaultGridSize = m.defaultGridSize, rulerMargin = m.rulerMargin, saveLoadButtons = m.saveLoadButtons}
+modelToFlag m = {defaultGridSize = m.defaultGridSize, rulerMargin = m.rulerMargin, saveLoadButtons = m.saveLoadButtons, labelColorUpdateEnabled = m.labelColorUpdateEnabled}
 
-type alias Flags = {defaultGridSize : Int, rulerMargin : Int, saveLoadButtons:Bool}
+type alias Flags = {defaultGridSize : Int, rulerMargin : Int, saveLoadButtons:Bool, labelColorUpdateEnabled:Bool}
 
 createModel : Flags -> Model
-createModel {defaultGridSize, rulerMargin, saveLoadButtons} =
+createModel {defaultGridSize, rulerMargin, saveLoadButtons, labelColorUpdateEnabled} =
     let g = Graph.empty in
     { 
       graphInfo = {tabs = [ { graph = g, sizeGrid = defaultGridSize, title = "1", id = 0, freehandDrawings = FreeHand.empty } ]
     , nextTabId = 1
     , activeTabId = 0
     , latexPreamble = "\\newcommand{\\" ++ coqProofTexCommand ++ "}[1]{\\checkmark}"
+    , latexBackgroundColor = "white"
       }
     , saveLoadButtons = saveLoadButtons
     , defaultGridSize = defaultGridSize
@@ -327,6 +330,7 @@ createModel {defaultGridSize, rulerMargin, saveLoadButtons} =
     , rulerShow = False
     -- when false, only the dependency edges of the selected nodes are shown
     , showDependencies = False
+    , labelColorUpdateEnabled = labelColorUpdateEnabled
     --, hoverId = Nothing
     -- whether we should select the closest object 
     -- when moving the mouse

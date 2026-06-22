@@ -36,6 +36,7 @@ type Mode
     | LoopMode LoopState
     | MakeSaveMode
     | LatexPreamble String
+    | NodeColorMode
 
 
 type alias LoopState =
@@ -76,6 +77,7 @@ toString m = case m of
   -- DeleteFreeHandMode _ -> "DeleteFreeHand"
   LoopMode _ -> "Loop"
   MakeSaveMode -> "MakeSave"
+  NodeColorMode -> "Node color"
 
 type alias CutHeadState = { edge: Graph.Edge EdgeLabel
     , head : Bool -- the head or the tail?
@@ -173,10 +175,13 @@ type alias CustomizeModeShiftState =
     , componentState : CaptureState
     -- , edge : Graph.Edge EdgeLabel
     }
+
+type alias CustomizeModeShortenState = CustomizeModeShiftState
 type CustomizeMode =
     CustomizeModePart EdgePart
                        -- true if source, false if target
   | CustomizeModeShift CustomizeModeShiftState
+  | CustomizeModeShorten CustomizeModeShortenState
   
 
 type alias NewLineState = {
@@ -189,6 +194,7 @@ type NewArrowMode =
   | NewArrowMain 
   | NewArrowBend CaptureState
   | NewArrowShift ArrowStyle.ExtremePart CaptureState
+  | NewArrowShorten ArrowStyle.ExtremePart CaptureState
 
 type alias NewArrowState =
     { chosen : Graph.Graph NodeLabel EdgeLabel,

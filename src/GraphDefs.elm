@@ -55,7 +55,8 @@ import HtmlDefs exposing (Key(..))
 defaultPullshoutShift = 10
 type alias NodeLabel = { pos : Point , label : String, dims : Maybe Point, 
                          selected : Bool, weaklySelected : Bool,
-                         isMath : Bool, zindex: Int, isCoqValidated: Bool}
+                         isMath : Bool, zindex: Int, isCoqValidated: Bool,
+                         color : Color.Color}
 
 type alias EdgeLabel = GenericEdge EdgeType
 type alias GenericEdge a = { details : a, selected : Bool,
@@ -106,11 +107,11 @@ coqProofTexCommand = "coqproof"
 
 mergeFunctions : Graph.MergeFunctions NodeLabel EdgeLabel
 mergeFunctions = 
-  {  mergeNode = \ n1 {pos, label, dims, isMath, zindex, isCoqValidated} -> 
+  {  mergeNode = \ n1 {pos, label, dims, isMath, zindex, isCoqValidated, color} -> 
          {n1 | 
             pos = pos, label = label, dims = dims 
             , isMath = isMath, zindex = zindex
-            , isCoqValidated = isCoqValidated
+            , isCoqValidated = isCoqValidated, color = color
          }
     , mergeEdge = \ e1 {details, zindex} -> {e1 | details = details, zindex = zindex}
   }
@@ -118,8 +119,9 @@ mergeFunctions =
 edgeToNodeLabel : Point -> EdgeLabel -> NodeLabel
 edgeToNodeLabel pos l = 
    let nodeLabel = { pos = pos, label = "", dims = Nothing,
-                 selected = l.selected, weaklySelected = l.weaklySelected,
-                 zindex = l.zindex, isMath = True, isCoqValidated = False}
+                  selected = l.selected, weaklySelected = l.weaklySelected,
+                  zindex = l.zindex, isMath = True, isCoqValidated = False,
+                  color = Color.black}
    in
    case l.details of 
      PullshoutEdge _ -> nodeLabel
@@ -350,12 +352,12 @@ md_updatePullshoutEdge id f =
 
 
 
-setColor : Color.Color -> EdgePart -> EdgeLabel -> EdgeLabel
-setColor color part e = 
+setColor : Bool -> Color.Color -> EdgePart -> EdgeLabel -> EdgeLabel
+setColor updateLabels color part e = 
    case e.details of
    NormalEdge l -> 
       let oldStyle = l.style in
-      let newStyle = ArrowStyle.updateEdgeColor part color oldStyle in
+      let newStyle = ArrowStyle.updateEdgeColor updateLabels part color oldStyle in
       { e | details = NormalEdge { l | style = newStyle }}
    PullshoutEdge x -> {e | details = PullshoutEdge { x | color = color}} 
 
@@ -428,7 +430,8 @@ updateStyleEdges update edges g =
 newNodeLabel : Point -> String -> Bool -> Int -> NodeLabel
 newNodeLabel p s isMath zindex = 
     { pos = p , label = s, dims = Nothing, selected = False, weaklySelected = False,
-                         isMath = isMath, zindex = zindex, isCoqValidated = False}
+                          isMath = isMath, zindex = zindex, isCoqValidated = False,
+                          color = Color.black}
                      
 
 makeProofString : String -> String
@@ -769,18 +772,22 @@ posGraph g =
                NormalEdge l ->
                   --  let dims = (padding, padding) |> Point.resize 4 in
                    let computePosDims isSource = 
-                        let (n, part) = 
-                                 if isSource then (n1, ArrowStyle.Tail)
-                                 else (n2, ArrowStyle.Head)
-                        in
-                        if not n.isArrow then n.posDims else
-                        let oldPosDims = n.posDims in
-                        { oldPosDims | 
-                          pos = Curve.point n.extrems.curve <| 
-                           ArrowStyle.shiftRatioFromPart l.style part
-                        }
-                   in
-                   let isLoop = n1.id == n2.id in
+                         let (n, part) = 
+                                  if isSource then (n1, ArrowStyle.Tail)
+                                  else (n2, ArrowStyle.Head)
+                             shorten = if isSource then l.style.shortenTail else l.style.shortenHead
+                         in
+                         let base =
+                               let base2 = n.posDims in
+                               if n.isArrow then
+                                  { base2 | pos = Curve.point n.extrems.curve <| ArrowStyle.shiftRatioFromPart l.style part }
+                               else
+                                  n.posDims
+                         in
+                         let adjustDim d = max 0 (d + shorten * 2) in
+                         { base | dims = (adjustDim (Tuple.first base.dims), adjustDim (Tuple.second base.dims)) }
+                    in
+                    let isLoop = n1.id == n2.id in
                   --  let (isLoop, q) = 
                   --       if n1.id == n2.id then
                   --           (True, Geometry.segmentRectBent (computePosDims True) (computePosDims False) l.style.bend)

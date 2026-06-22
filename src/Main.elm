@@ -73,6 +73,7 @@ import Modes.Move
 import Modes.Rename
 import Modes.Customize
 import Modes.Freehand
+import Modes.NodeColor
 import Drawing.Color as Color
 import Modes exposing (Mode(..), SelectState, MoveDirection(..), isResizeMode, ResizeState, EnlargeState)
 
@@ -108,6 +109,7 @@ import Format.Version16
 import Format.Version17
 import Format.Version18
 import Format.Version19
+import Format.Version20
 import Format.LastVersion as LastFormat
 
 import Format.GraphInfo as GraphInfo exposing (Tab)
@@ -177,6 +179,7 @@ port loadedGraph16 : (LoadGraphInfo Format.Version16.Graph -> a) -> Sub a
 port loadedGraph17 : (LoadGraphInfo Format.Version17.Graph -> a) -> Sub a
 port loadedGraph18 : (LoadGraphInfo Format.Version18.Graph -> a) -> Sub a
 port loadedGraph19 : (LoadGraphInfo Format.Version19.Graph -> a) -> Sub a
+port loadedGraph20 : (LoadGraphInfo Format.Version20.Graph -> a) -> Sub a
 
 
 -- port setFirstTabGrph : ()
@@ -240,8 +243,12 @@ port setFirstTabEquation : ({ statement :String, isVerbatim : Bool} -> a) -> Sub
 port promptTabTitle : String -> Cmd a
 port promptedTabTitle : (String -> a) -> Sub a
 
+-- ask js to prompt latex background color
+port promptLatexBackgroundColor : String -> Cmd a
+port promptedLatexBackgroundColor : (String -> a) -> Sub a
 
 port saveRulerGridSize : {gridSize:Int, rulerMargin:Int} -> Cmd a
+port saveLabelColorUpdateEnabled : Bool -> Cmd a
 
 
 -- number of ms between autosaves
@@ -265,6 +272,7 @@ subscriptions m =
       findReplace FindReplace,
       simpleMsg SimpleMsg,
       promptedTabTitle RenameTab,
+      promptedLatexBackgroundColor LatexBackgroundColorEdit,
       clear (\ {scenario, preamble} ->
           Clear {scenario = scenarioOfString scenario
                , preamble = preamble }),
@@ -290,6 +298,7 @@ subscriptions m =
       loadedGraph17 (mapLoadGraphInfo Format.Version17.fromJSGraph >> loadGraphInfoToMsg),
       loadedGraph18 (mapLoadGraphInfo Format.Version18.fromJSGraph >> loadGraphInfoToMsg),
       loadedGraph19 (mapLoadGraphInfo Format.Version19.fromJSGraph >> loadGraphInfoToMsg),
+      loadedGraph20 (mapLoadGraphInfo Format.Version20.fromJSGraph >> loadGraphInfoToMsg),
       setFirstTabEquation SetFirstTabEquation,
       -- decodedGraph (LastFormat.fromJSGraph >> PasteGraph),
       E.onClick (D.succeed MouseClick),
@@ -582,6 +591,7 @@ update msg modeli =
     --     noCmd <| { model | graphInfo = g}
      RenameTab s -> returnModif <| GraphInfo.TabRename activeTabId s
        --irenameActiveTab { modeli | mode = DefaultMode} s
+     LatexBackgroundColorEdit s -> returnModif <| GraphInfo.LatexBackgroundColorEdit s
      RemoveTab -> returnModif <| GraphInfo.TabRemove activeTabId
      NewTab -> returnModif <| GraphInfo.TabNew
      DuplicateTab -> returnModif <| GraphInfo.TabDuplicate activeTabId
@@ -630,6 +640,8 @@ update msg modeli =
      ToggleHideRuler -> noCmd {model | rulerShow = not model.rulerShow}  
      ToggleShowDependency -> noCmd {model | showDependencies = not model.showDependencies}
      ToggleAutosave -> noCmd {model | autoSave = not model.autoSave}     
+     ToggleLabelColorUpdate -> let enabled = not model.labelColorUpdateEnabled in
+                               ({model | labelColorUpdateEnabled = enabled}, saveLabelColorUpdateEnabled enabled)
      MouseMoveRaw v _ -> (model, onMouseMove v)
      NodeRendered n (x,y) ->
                 -- let _ = Debug.log "nouvelle dims !" (n, dims) in
@@ -690,6 +702,7 @@ update msg modeli =
         CustomizeMode ids -> Modes.Customize.update ids msg model
         BendMode state -> Modes.Bend.update state msg model
         LoopMode state -> Modes.Loop.update state msg model
+        NodeColorMode -> Modes.NodeColor.update msg model
         LatexPreamble s -> update_LatexPreamble s msg model
 
 update_LatexPreamble : String -> Msg -> Model -> (Model, Cmd Msg)
@@ -1010,6 +1023,8 @@ s                  (GraphDefs.clearSelection modelGraph) } -}
                 --   <| GraphDefs.clearWeakSelection modelGraph }              
         KeyChanged False _ (Character 'n') -> 
            Modes.NewLine.initialise model
+        KeyChanged False _ (Character 'N') -> 
+           noCmd <| Modes.NodeColor.initialise model
         KeyChanged False _ (Character 'v') -> 
                -- do not interfere with the paste event
                if model.specialKeys.ctrl then noCmd model else
@@ -1465,6 +1480,7 @@ graphDrawingFromModel m =
                 |> GraphDrawing.toDrawingGraph
     BendMode state -> Modes.Bend.graphDrawing m state
     LoopMode state -> Modes.Loop.graphDrawing m state
+    NodeColorMode -> collageGraphFromGraph m modelGraph
     LatexPreamble _ -> collageGraphFromGraph m modelGraph
         
 
@@ -1608,10 +1624,13 @@ helpMsg model =
                 ++ "[b] bend arrow/reshape looping arrow, "
                 ++ "[.] customise arrow marker, "
                 ++  "[\"bB][\"] to customize the pullback/pushout sign, "
-                ++  "[i]nvert arrow, "
-                ++ "[+<] move to the foreground/background (also for vertices)."
+                 ++  "[i]nvert arrow, "
+                 ++ "[+<] move to the foreground/background (also for vertices)."
 
-                ++ "\nMoving objects:"
+                 ++ "\nNodes: "
+                 ++ "[N]ode color (select one or more vertices first)"
+
+                 ++ "\nMoving objects:"
                 ++ "[g] move selected objects with possible merge (hold g for "
                 ++ "stopping the move on releasing the key)"
                 ++ ", [f]ix (snap) selected objects on the grid" 
@@ -1704,6 +1723,7 @@ helpMsg model =
                          else "[s] to select without holding the mouse, [click] to confirm."
 
         BendMode _ -> msg Modes.Bend.help
+        NodeColorMode -> msg Modes.NodeColor.help
         _ -> let txt = "Mode: " ++ Modes.toString (currentMode model) ++ ". [ESC] to cancel and come back to the default"
                    ++ " mode."
              in
@@ -1775,6 +1795,7 @@ view m =
 
 toDrawing : Model -> Graph NodeDrawingLabel EdgeDrawingLabel -> Drawing Msg
 toDrawing model graph = 
+    let bgColor = Codec.decoder Color.codec model.graphInfo.latexBackgroundColor in
     let cfg = 
           {  showDependencies = model.showDependencies,
              latexPreamble = case model.scenario of
@@ -1782,7 +1803,8 @@ toDrawing model graph =
                                         "\\newcommand{\\depthHistory}{"
                                         ++ String.fromInt (List.length model.history)
                                         ++ "}"                                       
-                                      _ -> model.graphInfo.latexPreamble            
+                                      _ -> model.graphInfo.latexPreamble,
+             latexBackgroundColor = bgColor            
           } 
     in
     graphDrawing cfg graph
@@ -1896,7 +1918,8 @@ viewGraph model =
            , HtmlDefs.checkbox ToggleHideGrid "Show grid" "" (not model.hideGrid)  
            , HtmlDefs.checkbox ToggleHideRuler "Show ruler" "" model.rulerShow           
            , HtmlDefs.checkbox ToggleAutosave "Autosave" "Quicksave every minute" (model.autoSave)
-           , Html.button [Html.Events.onClick SaveRulerGridSize] [Html.text "Save ruler & grid size preferences"] 
+           
+           , Html.button [Html.Events.onClick SaveRulerGridSize, Html.Attributes.title "Ruler, Grid size"] [Html.text "Save preferences"] 
            , Html.button [Html.Events.onClick OptimalGridSize, 
               Html.Attributes.title "Select two nodes. The new grid size is the max of the coordinate differences."] 
               [Html.text "Calibrate grid size"] 
@@ -1927,9 +1950,13 @@ viewGraph model =
                ] [ ]]
             _ ->
               [ Html.button [Html.Events.onClick LatexPreambleSwitch] [Html.text "Edit latex preamble"],
+                Html.button [Html.Events.onClick (Do (promptLatexBackgroundColor model.graphInfo.latexBackgroundColor)),
+                             Html.Attributes.title "Color of the shadows of lines/arrows, in exported LaTeX"]
+                   [Html.text <| "Latex background color: " ++ model.graphInfo.latexBackgroundColor],
                 HtmlDefs.checkbox ToggleShowDependency "Show dependencies" 
                   "(Coreact feature) If false, only the dependency edges of the selected nodes are shown"
                   (model.showDependencies),
+                HtmlDefs.checkbox ToggleLabelColorUpdate "Sync edge label color" "If checked, updating the color edge also updates the color of the label" model.labelColorUpdateEnabled,
                 Html.p [Html.Attributes.class "tabs"] (renderTabs model),          
                 Html.p [] [ Html.text <| if nmissings > 0 then 
                   String.fromInt nmissings ++ " nodes or edges could not be rendered."
