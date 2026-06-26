@@ -582,9 +582,6 @@ makeTailShape style =
                   , Svg.path [ Svg.d "M1.71 3.243h1.38", Svg.transform "translate(0 1.25)" ] []
                   , Svg.path [ Svg.d "M1.544 5.783 V 0.7", Svg.strokeLinecap "round" ] []
                   ]
-<<<<<<< HEAD
-         (_, _) -> Svg.g [] []
-=======
         --  (False, ArrowTail) ->
         --  {-
         --    <g fill="none" stroke="#000" stroke-width=".498" stroke-miterlimit="10">
@@ -603,4 +600,3 @@ makeTailShape style =
                   --  []
                   ]
          (_, _) -> Svg.g [] []
->>>>>>> ambroise/master
