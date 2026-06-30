@@ -1,4 +1,4 @@
-module ListExtraExtra exposing (succCyclePairs, nextInList)
+module ListExtraExtra exposing (succPairs, succCyclePairs, nextInList, moveLeftCycle, moveRightCycle, prevInList, move, subtract)
 import List.Extra as List
 
 permute : List a -> List a
@@ -6,6 +6,13 @@ permute l =
   case l of 
    [] -> []
    t :: q -> q ++ [t]
+
+succPairs : List a -> List (a, a)
+succPairs l =
+   case l of
+       t1 :: t2 :: q -> (t1, t2) :: succPairs (t2 :: q)
+       _ -> []
+
 
 succCyclePairs : List a -> List (a, a)
 succCyclePairs l =
@@ -25,3 +32,31 @@ prevInList l a = case l of
 
 nextInList : List a -> a -> a
 nextInList l a = prevInList (List.reverse l) a
+
+move : Bool -> (a -> Bool) -> List a -> List a
+move isRight f l =
+   case l of
+      [] -> []
+      [c] -> [c]
+      b :: c :: q ->
+         if (if isRight then f b else f c) then
+            c :: b :: q
+         else
+            b :: move isRight f (c :: q)
+moveRightCycle : (a -> Bool) -> List a -> List a
+moveRightCycle f l =
+   case List.unconsLast l of
+      Just (t,q) -> if f t then t :: q else
+          move True f l
+      Nothing -> []
+
+moveLeftCycle : (a -> Bool) -> List a -> List a
+moveLeftCycle f l =
+   case l of     
+      t :: q -> if f t then q ++ [t] else
+                 move False f l
+      [] -> []
+
+subtract : List a -> List a -> List a
+subtract l1 l2 =
+   List.filter (\x -> not (List.member x l2)) l1

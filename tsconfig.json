@@ -1,0 +1,14 @@
+{
+    "compilerOptions": {
+        "strict": true,
+        "esModuleInterop": true,
+        "downlevelIteration": true,
+        "lib": [
+        "dom.asynciterable", "dom"
+        ],
+    },
+    "include": [
+        "ts/*.ts"
+    ],
+	"rootDir": "ts",
+}
