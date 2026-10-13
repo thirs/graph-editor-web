@@ -1,7 +1,10 @@
-port module HtmlDefs exposing (onRendered, quickInputId, idInput, canvasId,
-   Key(..), Keys, keyDecoder, keysDecoder, makeLatex, checkbox, slider
-   , preventsDefaultOnKeyDown, makePasteCapture,
-   bottomTextId, computeLayout, latexPreambleId, select, introHtml)
+port module HtmlDefs exposing (onRendered, idInput, canvasId,
+   Key(..), Keys, keyDecoder, keysDecoder, makeLatex, checkbox, slider,
+   simpleOn
+   , preventsDefaultOnKeyDown,
+   --computeLayout, 
+   select, introHtml, overlayHelpMsg
+   , focusPosition, renderedClass, dimsAttribute, onPenDown, onPenUp)
 import Html
 import Html.Attributes
 import Html.Events
@@ -9,10 +12,11 @@ import Geometry.Point exposing (Point)
 import Json.Decode as D
 import Html.Parser
 import Html.Parser.Util
+import Html.Events.Extra.Pointer as PointerEvents
+import Json.Decode
 
-
-
-port computeLayout : () -> Cmd a
+port focusPosition : Point -> Cmd a
+-- port computeLayout : () -> Cmd a
 port select : String -> Cmd a
 
 
@@ -30,10 +34,11 @@ introHtml : List (Html.Html msg)
 introHtml = (textHtml <| """
    <p>
             A vi-inspired diagram editor, with              
-            (latex) labelled nodes and edges, tested with Firefox, written in <a href="https://elm-lang.org/">Elm</a> (see the code on 
+            (latex) labelled nodes and edges, tested with Chrome (doesn't work properly in Safari), written in <a href="https://elm-lang.org/">Elm</a> (see the code on 
         <a href="https://github.com/amblafont/graph-editor-web">github</a>).
-            Higher cells are supported.
-	    You can draw anywhere, not just on the grid (whose size can be later adjusted).
+            Collaborative editing is supported (check the <a href="https://github.com/amblafont/graph-editor-web/blob/master/README.md">README</a>).
+	    For a short description, see <a href="https://hal.science/hal-04407118v1">here</a>.
+        For a video demonstrating the mechanisation features, see <a href="https://github.com/amblafont/vscode-yade-example/releases/download/v0.1/demo-yade-example.mp4">here</a>.
 	    </p>
 	    <p>
 	    For LaTeX export, press (capital) 'X' after selection. The output code relies on
@@ -54,22 +59,16 @@ idInput = "edited_label"
 canvasId : String
 canvasId = "canvas"
 
-bottomTextId : String
-bottomTextId = "bottom-text"
 
-latexPreambleId : String
-latexPreambleId = "latex-preamble"
-
-pasteElement = "paste-capture"
 latexElement = "math-latex"
 
-quickInputId : String
-quickInputId = "quickinput"
 
 renderedClass = "rendered-callback"
 renderedEvent = "rendered"
 
-pasteEvent = "pasteData"
+simpleOn : String -> a -> Html.Attribute a
+simpleOn event = Json.Decode.succeed >> Html.Events.on event -- >> ghostAttribute
+
 
 renderedDecoder : D.Decoder Point
 renderedDecoder = 
@@ -78,22 +77,23 @@ renderedDecoder =
         (D.field "width" D.float)
         (D.field "height" D.float)
 
-onRendered : (Point -> msg) -> List (Html.Attribute msg)
+onRendered : (Point -> msg) -> Html.Attribute msg
 onRendered onRender =
-    [ Html.Events.on renderedEvent (D.map onRender renderedDecoder),
-      Html.Attributes.class renderedClass ]
+     Html.Events.on renderedEvent (D.map onRender renderedDecoder)
+    
 
-onPaste : (D.Value -> msg) -> Html.Attribute msg
-onPaste handler = Html.Events.on pasteEvent 
-                  <| D.map handler D.value
+isPenEvent : PointerEvents.Event -> Bool 
+isPenEvent e = e.pointerType == PointerEvents.PenType 
 
+onPenDown : msg -> (PointerEvents.Event -> msg) -> Html.Attribute msg
+onPenDown default f = 
+   PointerEvents.onWithOptions "pointerdown" 
+                         { stopPropagation = False, preventDefault = False }
+       (\e -> if isPenEvent e then f e else default)
 
-makePasteCapture : (D.Value -> a) -> List (Html.Attribute a) -> List (Html.Html a) -> Html.Html a
-makePasteCapture handler attrs s =
-  Html.node pasteElement (onPaste handler :: attrs) s
-  
-   
-      
+onPenUp : msg -> (PointerEvents.Event -> msg) -> Html.Attribute msg
+onPenUp default f = 
+   PointerEvents.onUp (\e -> if isPenEvent e then f e else default)
 
 
 -- From https://github.com/elm/browser/blob/1.0.2/notes/keyboard.md
@@ -171,3 +171,12 @@ slider msg name min max value =
           Html.Events.onInput (String.toInt >> Maybe.withDefault value >> msg) ] []
         , Html.text name
         ]
+
+dimsAttribute : (Float, Float) -> List (Html.Attribute a)
+dimsAttribute (width, height) = 
+    [ Html.Attributes.attribute "data-width" (String.fromFloat width),
+      Html.Attributes.attribute "data-height" (String.fromFloat height)
+    ]
+
+overlayHelpMsg : String
+overlayHelpMsg = "[?] to toggle help overlay"
